@@ -77,13 +77,31 @@ RUN python3 -m pip install -r /build/requirements-openvla.txt && \
 # Install dlimp without dependencies (avoids tensorflow version conflict)
 RUN python3 -m pip install --no-deps "dlimp @ git+https://github.com/moojink/dlimp_openvla"
 
-# Clean up (preserve TensorFlow structure)
+# Aggressive cleanup to reduce image size
 RUN find /usr/local/lib/python${PYTHON_VERSION} -type d -name "tests" ! -path "*/tensorflow*/*" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python${PYTHON_VERSION} -type d -name "test" ! -path "*/tensorflow*/*" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python${PYTHON_VERSION} -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python${PYTHON_VERSION} -name "*.pyc" -delete && \
     find /usr/local/lib/python${PYTHON_VERSION} -name "*.pyo" -delete && \
-    rm -rf /tmp/* /var/tmp/*
+    # Remove static libraries (save ~500MB)
+    find /usr/local/lib/python${PYTHON_VERSION} -name "*.a" -delete && \
+    # Remove CUDA 12 libraries (keep only CUDA 13 for PyTorch)
+    rm -rf /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cublas_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cuda_cupti_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cuda_nvcc_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cuda_runtime_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cudnn_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cufft_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cusolver_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cusparse_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/nccl_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/nvjitlink_cu12* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/jax_cuda12_pjrt* \
+           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/jax_cuda12_plugin* 2>/dev/null || true && \
+    # Strip debug symbols from .so files (save ~1GB)
+    find /usr/local/lib/python${PYTHON_VERSION} -name "*.so" -exec strip --strip-unneeded {} \; 2>/dev/null || true && \
+    find /usr/local/lib/python${PYTHON_VERSION} -name "*.so.*" -exec strip --strip-unneeded {} \; 2>/dev/null || true && \
+    rm -rf /tmp/* /var/tmp/* /root/.cache
 
 # ============================================================================
 # Runtime Stage: Minimal runtime environment
@@ -131,14 +149,11 @@ WORKDIR /workspace/vla
 COPY --from=builder /usr/local/lib/python${PYTHON_VERSION}/dist-packages /usr/local/lib/python${PYTHON_VERSION}/dist-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Aggressive cleanup (preserve TensorFlow structure completely)
-RUN find /usr/local/lib/python${PYTHON_VERSION} -type d -name "tests" ! -path "*/tensorflow*/*" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python${PYTHON_VERSION} -type d -name "test" ! -path "*/tensorflow*/*" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python${PYTHON_VERSION} -type d -name "docs" ! -path "*/tensorflow*/*" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python${PYTHON_VERSION} -type d -name "examples" ! -path "*/tensorflow*/*" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python${PYTHON_VERSION} -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+# Final cleanup in runtime stage
+RUN find /usr/local/lib/python${PYTHON_VERSION} -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python${PYTHON_VERSION} -name "*.pyc" -delete && \
-    find /usr/local/lib/python${PYTHON_VERSION} -name "*.pyo" -delete
+    find /usr/local/lib/python${PYTHON_VERSION} -name "*.pyo" -delete && \
+    rm -rf /root/.cache /tmp/* /var/tmp/*
 
 # Create directories for data, checkpoints, and logs
 RUN mkdir -p /workspace/vla /workspace/data /workspace/checkpoints /workspace/logs
