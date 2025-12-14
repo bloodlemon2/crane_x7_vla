@@ -11,12 +11,13 @@ Copyright (c) 2025 nop
 Licensed under the MIT License
 """
 
+from crane_x7_vla.core.config.base import UnifiedVLAConfig
 from crane_x7_vla.training.trainer import VLATrainer
-from crane_x7_vla.config.base import UnifiedVLAConfig
+
 
 __version__ = "0.1.0"
 
 __all__ = [
-    "VLATrainer",
     "UnifiedVLAConfig",
+    "VLATrainer",
 ]

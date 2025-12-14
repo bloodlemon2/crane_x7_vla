@@ -8,16 +8,20 @@ Provides a single interface for training different VLA backends.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from crane_x7_vla.backends import get_backend
-from crane_x7_vla.backends.base import VLABackend
-from crane_x7_vla.config.base import UnifiedVLAConfig
-from crane_x7_vla.config.openvla_config import OpenVLAConfig
-from crane_x7_vla.config.openvla_oft_config import OpenVLAOFTConfig
-from crane_x7_vla.config.openpi_config import OpenPIConfig
-from crane_x7_vla.config.openpi_pytorch_config import OpenPIPytorchConfig
-from crane_x7_vla.utils.logging import get_logger
+from crane_x7_vla.backends.openpi.config import OpenPIConfig
+from crane_x7_vla.backends.openpi_pytorch.config import OpenPIPytorchConfig
+from crane_x7_vla.backends.openvla.config import OpenVLAConfig
+from crane_x7_vla.backends.openvla_oft.config import OpenVLAOFTConfig
+from crane_x7_vla.core.config.base import UnifiedVLAConfig
+from crane_x7_vla.core.utils.logging import get_logger
+
+
+if TYPE_CHECKING:
+    from crane_x7_vla.core.base import VLABackend
+
 
 logger = get_logger(__name__)
 
@@ -30,8 +34,7 @@ class VLATrainer:
     """
 
     def __init__(
-        self,
-        config: Union[UnifiedVLAConfig, OpenVLAConfig, OpenVLAOFTConfig, OpenPIConfig, OpenPIPytorchConfig]
+        self, config: UnifiedVLAConfig | OpenVLAConfig | OpenVLAOFTConfig | OpenPIConfig | OpenPIPytorchConfig
     ):
         """
         Initialize VLA trainer.
@@ -40,7 +43,7 @@ class VLATrainer:
             config: Unified VLA configuration or backend-specific configuration
         """
         self.config = config
-        self.backend: Optional[VLABackend] = None
+        self.backend: VLABackend | None = None
 
         # Create backend
         self._create_backend()
@@ -91,7 +94,7 @@ class VLATrainer:
 
     def _convert_to_openvla_config(self, config: UnifiedVLAConfig) -> OpenVLAConfig:
         """Convert UnifiedVLAConfig to OpenVLAConfig."""
-        from crane_x7_vla.config.openvla_config import OpenVLASpecificConfig
+        from crane_x7_vla.backends.openvla.config import OpenVLASpecificConfig
 
         # Create OpenVLA-specific config from backend_config if available
         openvla_specific = OpenVLASpecificConfig()
@@ -109,14 +112,14 @@ class VLATrainer:
             experiment_name=config.experiment_name,
             seed=config.seed,
             resume_from_checkpoint=config.resume_from_checkpoint,
-            openvla=openvla_specific
+            openvla=openvla_specific,
         )
 
         return openvla_config
 
     def _convert_to_openpi_config(self, config: UnifiedVLAConfig) -> OpenPIConfig:
         """Convert UnifiedVLAConfig to OpenPIConfig."""
-        from crane_x7_vla.config.openpi_config import OpenPISpecificConfig
+        from crane_x7_vla.backends.openpi.config import OpenPISpecificConfig
 
         # Create OpenPI-specific config from backend_config if available
         openpi_specific = OpenPISpecificConfig()
@@ -134,14 +137,14 @@ class VLATrainer:
             experiment_name=config.experiment_name,
             seed=config.seed,
             resume_from_checkpoint=config.resume_from_checkpoint,
-            openpi=openpi_specific
+            openpi=openpi_specific,
         )
 
         return openpi_config
 
     def _convert_to_openpi_pytorch_config(self, config: UnifiedVLAConfig) -> OpenPIPytorchConfig:
         """Convert UnifiedVLAConfig to OpenPIPytorchConfig."""
-        from crane_x7_vla.config.openpi_pytorch_config import OpenPIPytorchSpecificConfig
+        from crane_x7_vla.backends.openpi_pytorch.config import OpenPIPytorchSpecificConfig
 
         # Create OpenPI PyTorch-specific config from backend_config if available
         openpi_pytorch_specific = OpenPIPytorchSpecificConfig()
@@ -159,14 +162,14 @@ class VLATrainer:
             experiment_name=config.experiment_name,
             seed=config.seed,
             resume_from_checkpoint=config.resume_from_checkpoint,
-            openpi_pytorch=openpi_pytorch_specific
+            openpi_pytorch=openpi_pytorch_specific,
         )
 
         return openpi_pytorch_config
 
     def _convert_to_openvla_oft_config(self, config: UnifiedVLAConfig) -> OpenVLAOFTConfig:
         """Convert UnifiedVLAConfig to OpenVLAOFTConfig."""
-        from crane_x7_vla.config.openvla_oft_config import OpenVLAOFTSpecificConfig
+        from crane_x7_vla.backends.openvla_oft.config import OpenVLAOFTSpecificConfig
 
         # Create OpenVLA-OFT specific config from backend_config if available
         openvla_oft_specific = OpenVLAOFTSpecificConfig()
@@ -193,12 +196,12 @@ class VLATrainer:
             experiment_name=config.experiment_name,
             seed=config.seed,
             resume_from_checkpoint=config.resume_from_checkpoint,
-            openvla_oft=openvla_oft_specific
+            openvla_oft=openvla_oft_specific,
         )
 
         return openvla_oft_config
 
-    def train(self) -> Dict[str, Any]:
+    def train(self) -> dict[str, Any]:
         """
         Execute training.
 
@@ -221,10 +224,8 @@ class VLATrainer:
         return results
 
     def evaluate(
-        self,
-        checkpoint_path: Optional[Union[str, Path]] = None,
-        test_data_path: Optional[Union[str, Path]] = None
-    ) -> Dict[str, float]:
+        self, checkpoint_path: str | Path | None = None, test_data_path: str | Path | None = None
+    ) -> dict[str, float]:
         """
         Evaluate the model.
 
@@ -240,7 +241,7 @@ class VLATrainer:
         logger.info(f"Evaluation metrics: {metrics}")
         return metrics
 
-    def save_config(self, path: Union[str, Path]) -> None:
+    def save_config(self, path: str | Path) -> None:
         """
         Save configuration to file.
 
@@ -252,7 +253,7 @@ class VLATrainer:
         logger.info(f"Configuration saved to {path}")
 
     @classmethod
-    def from_config_file(cls, config_path: Union[str, Path]) -> "VLATrainer":
+    def from_config_file(cls, config_path: str | Path) -> "VLATrainer":
         """
         Create trainer from configuration file.
 

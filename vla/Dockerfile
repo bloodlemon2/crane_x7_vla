@@ -7,16 +7,25 @@
 #
 # Usage:
 #   docker build -t crane_x7_vla .
+#
+# Build with different CUDA versions:
+#   docker build --build-arg CUDA_VERSION=12.6.3 --build-arg CUDA_SHORT=cu126 -t crane_x7_vla .
+#   docker build --build-arg CUDA_VERSION=13.0.0 --build-arg CUDA_SHORT=cu130 -t crane_x7_vla .
 
-ARG CUDA_VERSION=13.0.0
+ARG CUDA_VERSION=12.6.3
+ARG CUDA_SHORT=cu126
+ARG PYTORCH_VERSION=2.9.1
 ARG PYTHON_VERSION=3.11
 
 # ============================================================================
 # Builder Stage: Install build dependencies and Python packages
 # ============================================================================
-FROM nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu22.04 AS builder
+# Use runtime image for both stages (base lacks CUDA runtime libraries)
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04 AS builder
 
 ARG PYTHON_VERSION
+ARG CUDA_SHORT
+ARG PYTORCH_VERSION
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -48,21 +57,28 @@ WORKDIR /build
 # Copy requirements files
 COPY requirements-*.txt /build/
 
-# Install PyTorch 2.9.1 with CUDA 13.0
+# Install PyTorch with CUDA support
 RUN python3 -m pip install \
-    torch==2.9.1 torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/cu130
+    torch==${PYTORCH_VERSION} torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/${CUDA_SHORT}
+
+# Downgrade numpy to 1.x (PyTorch installs 2.x which causes WSL2 OpenBLAS issues)
+RUN python3 -m pip install "numpy>=1.24.0,<2.0.0"
 
 # Install JAX with CUDA 12 support
 RUN python3 -m pip install "jax[cuda12]==0.5.3" \
     -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
-# Install Flash Attention from prebuilt wheel (PyTorch 2.9 + CUDA 13.0)
+# Install Flash Attention from prebuilt wheel
 # Source: https://github.com/mjun0812/flash-attention-prebuild-wheels/releases
-ARG FLASH_ATTN_WHEEL=flash_attn-2.8.3+cu130torch2.9-cp311-cp311-linux_x86_64.whl
-RUN wget -q https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.5.4/${FLASH_ATTN_WHEEL} && \
-    python3 -m pip install ${FLASH_ATTN_WHEEL} && \
-    rm -f ${FLASH_ATTN_WHEEL}
+# Wheel naming: flash_attn-{version}+{cuda_short}torch{pytorch_major.minor}-cp{python}-cp{python}-linux_x86_64.whl
+ARG FLASH_ATTN_VERSION=2.8.3
+ARG FLASH_ATTN_RELEASE=v0.5.4
+RUN PYTORCH_SHORT=$(echo ${PYTORCH_VERSION} | cut -d. -f1,2) && \
+    WHEEL_NAME="flash_attn-${FLASH_ATTN_VERSION}+${CUDA_SHORT}torch${PYTORCH_SHORT}-cp311-cp311-linux_x86_64.whl" && \
+    wget -q "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/${FLASH_ATTN_RELEASE}/${WHEEL_NAME}" && \
+    python3 -m pip install "${WHEEL_NAME}" && \
+    rm -f "${WHEEL_NAME}"
 
 # Install all backend requirements
 # Base requirements (shared by all backends)
@@ -77,36 +93,18 @@ RUN python3 -m pip install -r /build/requirements-openvla.txt && \
 # Install dlimp without dependencies (avoids tensorflow version conflict)
 RUN python3 -m pip install --no-deps "dlimp @ git+https://github.com/moojink/dlimp_openvla"
 
-# Aggressive cleanup to reduce image size
-RUN find /usr/local/lib/python${PYTHON_VERSION} -type d -name "tests" ! -path "*/tensorflow*/*" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python${PYTHON_VERSION} -type d -name "test" ! -path "*/tensorflow*/*" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python${PYTHON_VERSION} -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python${PYTHON_VERSION} -name "*.pyc" -delete && \
-    find /usr/local/lib/python${PYTHON_VERSION} -name "*.pyo" -delete && \
-    # Remove static libraries (save ~500MB)
-    find /usr/local/lib/python${PYTHON_VERSION} -name "*.a" -delete && \
-    # Remove CUDA 12 libraries (keep only CUDA 13 for PyTorch)
-    rm -rf /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cublas_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cuda_cupti_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cuda_nvcc_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cuda_runtime_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cudnn_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cufft_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cusolver_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/cusparse_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/nccl_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/nvidia/nvjitlink_cu12* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/jax_cuda12_pjrt* \
-           /usr/local/lib/python${PYTHON_VERSION}/dist-packages/jax_cuda12_plugin* 2>/dev/null || true && \
-    # Strip debug symbols from .so files (save ~1GB)
-    find /usr/local/lib/python${PYTHON_VERSION} -name "*.so" -exec strip --strip-unneeded {} \; 2>/dev/null || true && \
-    find /usr/local/lib/python${PYTHON_VERSION} -name "*.so.*" -exec strip --strip-unneeded {} \; 2>/dev/null || true && \
-    rm -rf /tmp/* /var/tmp/* /root/.cache
+# Force numpy 1.x at the end (tensorflow/other packages install 2.x which breaks on WSL2)
+RUN python3 -m pip install "numpy>=1.26.0,<2.0.0" --force-reinstall --no-deps
+
+# Basic cleanup (keep CUDA/cuDNN libraries that PyTorch needs)
+RUN rm -rf /tmp/* /var/tmp/* /root/.cache ~/.cache && \
+    rm -rf /usr/local/lib/python${PYTHON_VERSION}/dist-packages/jax_cuda12* 2>/dev/null || true
 
 # ============================================================================
 # Runtime Stage: Minimal runtime environment
 # ============================================================================
-FROM nvidia/cuda:${CUDA_VERSION}-cudnn-runtime-ubuntu22.04 AS base
+# Use runtime image - includes CUDA runtime libraries needed by PyTorch
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04 AS base
 
 ARG PYTHON_VERSION
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -203,11 +201,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install development Python packages
-RUN python3 -m pip install tensorboard
-
 USER ${USERNAME}
-
-EXPOSE 6006
 
 CMD ["/bin/bash"]

@@ -16,19 +16,23 @@ from dataclasses import MISSING, fields, is_dataclass
 from pathlib import Path
 from typing import Literal, Union, get_args, get_origin, get_type_hints
 
-from crane_x7_vla.config.base import CameraConfig, DataConfig, OverfittingConfig, TrainingConfig, UnifiedVLAConfig
-from crane_x7_vla.config.openpi_config import OpenPIConfig, OpenPISpecificConfig
-from crane_x7_vla.config.openpi_pytorch_config import OpenPIPytorchConfig, OpenPIPytorchSpecificConfig
-from crane_x7_vla.config.openvla_config import OpenVLAConfig, OpenVLASpecificConfig
-from crane_x7_vla.config.openvla_oft_config import (
+from crane_x7_vla.backends.minivla.config import MiniVLAConfig, MiniVLASpecificConfig, MultiImageConfig, VQConfig
+from crane_x7_vla.backends.openpi.config import OpenPIConfig, OpenPISpecificConfig
+from crane_x7_vla.backends.openpi_pytorch.config import OpenPIPytorchConfig, OpenPIPytorchSpecificConfig
+from crane_x7_vla.backends.openvla.config import OpenVLAConfig, OpenVLASpecificConfig
+from crane_x7_vla.backends.openvla_oft.config import (
+    ActionHeadConfig,
+    FiLMConfig,
     OpenVLAOFTConfig,
     OpenVLAOFTSpecificConfig,
-    FiLMConfig,
-    ActionHeadConfig,
-    ProprioConfig as OFTProprioConfig,
+)
+from crane_x7_vla.backends.openvla_oft.config import (
     MultiImageConfig as OFTMultiImageConfig,
 )
-from crane_x7_vla.config.minivla_config import MiniVLAConfig, MiniVLASpecificConfig, VQConfig, MultiImageConfig
+from crane_x7_vla.backends.openvla_oft.config import (
+    ProprioConfig as OFTProprioConfig,
+)
+from crane_x7_vla.core.config.base import CameraConfig, DataConfig, OverfittingConfig, TrainingConfig, UnifiedVLAConfig
 from crane_x7_vla.training.trainer import VLATrainer
 
 
@@ -733,7 +737,14 @@ Examples:
         openvla_oft_group,
         OpenVLAOFTSpecificConfig,
         prefix="",  # No prefix for backend-specific args
-        exclude_fields=["lora_target_modules", "image_size", "action_head", "film", "proprio", "multi_image"],  # Complex types
+        exclude_fields=[
+            "lora_target_modules",
+            "image_size",
+            "action_head",
+            "film",
+            "proprio",
+            "multi_image",
+        ],  # Complex types
     )
 
     # Add FiLM-specific arguments
@@ -784,7 +795,13 @@ Examples:
     # Config command
     # =====================
     config_parser = subparsers.add_parser("config", help="Generate default configuration file")
-    config_parser.add_argument("--backend", type=str, choices=["openvla", "openvla-oft", "openpi", "openpi-pytorch", "minivla"], required=True, help="VLA backend")
+    config_parser.add_argument(
+        "--backend",
+        type=str,
+        choices=["openvla", "openvla-oft", "openpi", "openpi-pytorch", "minivla"],
+        required=True,
+        help="VLA backend",
+    )
     config_parser.add_argument("--output", type=str, default="config.yaml", help="Output configuration file path")
     config_parser.add_argument("--data-root", type=str, help="Path to training data directory")
     config_parser.add_argument("--output-dir", type=str, help="Output directory for checkpoints and logs")
