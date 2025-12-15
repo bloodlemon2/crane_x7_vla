@@ -667,8 +667,97 @@ class OpenPIPytorchBackend(VLABackend):
     def evaluate(
         self, checkpoint_path: str | Path | None = None, test_data_path: str | Path | None = None
     ) -> dict[str, float]:
-        """Evaluate model (not yet implemented)."""
-        raise NotImplementedError("Evaluation not yet implemented for OpenPI PyTorch backend")
+        """
+        Evaluate model on test data.
+
+        Args:
+            checkpoint_path: Path to model checkpoint (loads if provided)
+            test_data_path: Path to test dataset (uses config data path if not provided)
+
+        Returns:
+            Dictionary containing evaluation metrics:
+                - eval/loss: Average flow matching loss
+                - eval/action_mse: Average action prediction MSE
+                - eval/num_samples: Number of samples evaluated
+        """
+        if checkpoint_path:
+            self.load_checkpoint(checkpoint_path)
+
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load_checkpoint first or provide checkpoint_path.")
+
+        # Determine data path
+        data_path = Path(test_data_path) if test_data_path else self.config.data.data_root
+
+        # Create test dataset
+        test_dataset = CraneX7ActionChunkDataset(
+            data_root_dir=data_path,
+            action_horizon=self._action_horizon,
+            source_action_dim=self._action_dim,
+            target_action_dim=self._target_action_dim,
+            resize_resolution=self._image_size,
+            train=False,
+            image_aug=False,
+            normalize_actions=self.config.openpi_pytorch.normalize_actions,
+            normalization_mode=self.config.openpi_pytorch.normalization_mode,
+            default_prompt=self.config.openpi_pytorch.default_prompt,
+            split="test",
+        )
+
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=self.config.training.batch_size,
+            collate_fn=collate_action_chunk_batch,
+            num_workers=0,
+        )
+
+        # Evaluation loop
+        device = next(self.model.parameters()).device
+        dtype = torch.bfloat16 if self.config.openpi_pytorch.precision == "bfloat16" else torch.float32
+
+        self.model.eval()
+        total_loss = 0.0
+        total_mse = 0.0
+        num_batches = 0
+
+        logger.info("Starting evaluation...")
+
+        with torch.no_grad():
+            for batch in test_dataloader:
+                observation = {
+                    "state": batch["observation"]["state"].to(device),
+                    "image": {
+                        "base_0_rgb": batch["observation"]["image"]["base_0_rgb"].to(device),
+                    },
+                }
+                actions = batch["actions"].to(device)
+
+                with torch.amp.autocast("cuda", dtype=dtype):
+                    # Compute flow matching loss
+                    loss = self.model.compute_loss(observation, actions)
+
+                    # Compute action prediction MSE
+                    pred_actions = self.model.sample_actions(
+                        observation,
+                        num_steps=self.config.openpi_pytorch.num_denoise_steps,
+                    )
+                    mse = F.mse_loss(pred_actions, actions)
+
+                total_loss += loss.item()
+                total_mse += mse.item()
+                num_batches += 1
+
+        num_samples = num_batches * self.config.training.batch_size
+        avg_loss = total_loss / max(num_batches, 1)
+        avg_mse = total_mse / max(num_batches, 1)
+
+        logger.info(f"Evaluation complete: loss={avg_loss:.4f}, action_mse={avg_mse:.4f}, samples={num_samples}")
+
+        return {
+            "eval/loss": avg_loss,
+            "eval/action_mse": avg_mse,
+            "eval/num_samples": float(num_samples),
+        }
 
     def infer(self, observation: dict[str, np.ndarray], language_instruction: str | None = None) -> np.ndarray:
         """

@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025 nop
 #
 # Unified VLA Dockerfile for CRANE-X7
-# All backends included: openvla, minivla, openpi, openpi-pytorch
+# All backends included: openvla, minivla, openpi-pytorch
 #
 # Usage:
 #   docker build -t crane_x7_vla .
@@ -65,10 +65,6 @@ RUN python3 -m pip install \
 # Downgrade numpy to 1.x (PyTorch installs 2.x which causes WSL2 OpenBLAS issues)
 RUN python3 -m pip install "numpy>=1.24.0,<2.0.0"
 
-# Install JAX with CUDA 12 support
-RUN python3 -m pip install "jax[cuda12]==0.5.3" \
-    -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-
 # Install Flash Attention from prebuilt wheel
 # Source: https://github.com/mjun0812/flash-attention-prebuild-wheels/releases
 # Wheel naming: flash_attn-{version}+{cuda_short}torch{pytorch_major.minor}-cp{python}-cp{python}-linux_x86_64.whl
@@ -87,7 +83,6 @@ RUN python3 -m pip install -r /build/requirements-base.txt
 # Backend-specific requirements
 RUN python3 -m pip install -r /build/requirements-openvla.txt && \
     python3 -m pip install -r /build/requirements-minivla.txt && \
-    python3 -m pip install -r /build/requirements-openpi.txt && \
     python3 -m pip install -r /build/requirements-openpi-pytorch.txt
 
 # Install dlimp without dependencies (avoids tensorflow version conflict)
@@ -97,8 +92,7 @@ RUN python3 -m pip install --no-deps "dlimp @ git+https://github.com/moojink/dli
 RUN python3 -m pip install "numpy>=1.26.0,<2.0.0" --force-reinstall --no-deps
 
 # Basic cleanup (keep CUDA/cuDNN libraries that PyTorch needs)
-RUN rm -rf /tmp/* /var/tmp/* /root/.cache ~/.cache && \
-    rm -rf /usr/local/lib/python${PYTHON_VERSION}/dist-packages/jax_cuda12* 2>/dev/null || true
+RUN rm -rf /tmp/* /var/tmp/* /root/.cache ~/.cache
 
 # ============================================================================
 # Runtime Stage: Minimal runtime environment
@@ -167,12 +161,6 @@ ENV CUDA_LAUNCH_BLOCKING=0 \
     TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
     TF_CPP_MIN_LOG_LEVEL=2 \
     PYTHONPATH=/workspace/vla/src/crane_x7_vla:/workspace/vla/src
-
-# JAX-specific environment variables (only relevant for openpi backend)
-ENV XLA_PYTHON_CLIENT_PREALLOCATE=false \
-    XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-    JAX_PLATFORMS="cuda" \
-    JAX_TRACEBACK_FILTERING=off
 
 # Create non-root user matching host UID/GID
 ARG USER_ID=1000

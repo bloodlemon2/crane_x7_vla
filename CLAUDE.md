@@ -267,10 +267,9 @@ crane_x7_vla/
 |-------------|-----------|------|------|
 | OpenVLA | ~7B | Prismatic VLMベース | 実装済み |
 | MiniVLA | ~1B | Qwen 2.5 + VQ Action Chunking | 実装済み |
-| OpenPI | - | π₀モデル（JAX版） | 未実装 |
-| OpenPI-PyTorch | - | HuggingFace Pi0 | 未実装 |
+| OpenPI-PyTorch | - | CLIP + Flow Matching (PyTorch) | 実装済み |
 
-共通環境: **CUDA 13.0** / **Python 3.11** / **PyTorch 2.9.1** / **JAX 0.5.3**
+共通環境: **CUDA 12.6** / **Python 3.11** / **PyTorch 2.9.1**
 
 ### データフォーマット
 

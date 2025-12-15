@@ -12,12 +12,19 @@ Licensed under the MIT License
 """
 
 from crane_x7_vla.core.config.base import UnifiedVLAConfig
-from crane_x7_vla.training.trainer import VLATrainer
 
 
 __version__ = "0.1.0"
 
 __all__ = [
     "UnifiedVLAConfig",
-    "VLATrainer",
 ]
+
+
+def __getattr__(name: str):
+    """Lazy import for VLATrainer to avoid loading all backends."""
+    if name == "VLATrainer":
+        from crane_x7_vla.training.trainer import VLATrainer
+
+        return VLATrainer
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

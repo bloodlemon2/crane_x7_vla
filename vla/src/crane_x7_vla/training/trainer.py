@@ -7,19 +7,21 @@ Unified VLA trainer.
 Provides a single interface for training different VLA backends.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from crane_x7_vla.backends import get_backend
-from crane_x7_vla.backends.openpi.config import OpenPIConfig
-from crane_x7_vla.backends.openpi_pytorch.config import OpenPIPytorchConfig
-from crane_x7_vla.backends.openvla.config import OpenVLAConfig
-from crane_x7_vla.backends.openvla_oft.config import OpenVLAOFTConfig
 from crane_x7_vla.core.config.base import UnifiedVLAConfig
 from crane_x7_vla.core.utils.logging import get_logger
 
 
 if TYPE_CHECKING:
+    from crane_x7_vla.backends.openpi.config import OpenPIConfig
+    from crane_x7_vla.backends.openpi_pytorch.config import OpenPIPytorchConfig
+    from crane_x7_vla.backends.openvla.config import OpenVLAConfig
+    from crane_x7_vla.backends.openvla_oft.config import OpenVLAOFTConfig
     from crane_x7_vla.core.base import VLABackend
 
 
@@ -59,28 +61,28 @@ class VLATrainer:
 
         # Convert config to backend-specific config if needed
         if backend_type == "openvla":
-            if not isinstance(self.config, OpenVLAConfig):
-                backend_config = self._convert_to_openvla_config(self.config)
-            else:
+            if hasattr(self.config, "openvla") and self.config.openvla is not None:
                 backend_config = self.config
+            else:
+                backend_config = self._convert_to_openvla_config(self.config)
 
         elif backend_type == "openpi":
-            if not isinstance(self.config, OpenPIConfig):
-                backend_config = self._convert_to_openpi_config(self.config)
-            else:
+            if hasattr(self.config, "openpi") and self.config.openpi is not None:
                 backend_config = self.config
+            else:
+                backend_config = self._convert_to_openpi_config(self.config)
 
         elif backend_type == "openpi-pytorch":
-            if not isinstance(self.config, OpenPIPytorchConfig):
-                backend_config = self._convert_to_openpi_pytorch_config(self.config)
-            else:
+            if hasattr(self.config, "openpi_pytorch") and self.config.openpi_pytorch is not None:
                 backend_config = self.config
+            else:
+                backend_config = self._convert_to_openpi_pytorch_config(self.config)
 
         elif backend_type == "openvla-oft":
-            if not isinstance(self.config, OpenVLAOFTConfig):
-                backend_config = self._convert_to_openvla_oft_config(self.config)
-            else:
+            if hasattr(self.config, "openvla_oft") and self.config.openvla_oft is not None:
                 backend_config = self.config
+            else:
+                backend_config = self._convert_to_openvla_oft_config(self.config)
 
         elif backend_type == "minivla":
             # MiniVLA uses its config directly through get_backend
@@ -94,7 +96,7 @@ class VLATrainer:
 
     def _convert_to_openvla_config(self, config: UnifiedVLAConfig) -> OpenVLAConfig:
         """Convert UnifiedVLAConfig to OpenVLAConfig."""
-        from crane_x7_vla.backends.openvla.config import OpenVLASpecificConfig
+        from crane_x7_vla.backends.openvla.config import OpenVLAConfig, OpenVLASpecificConfig
 
         # Create OpenVLA-specific config from backend_config if available
         openvla_specific = OpenVLASpecificConfig()
@@ -119,7 +121,7 @@ class VLATrainer:
 
     def _convert_to_openpi_config(self, config: UnifiedVLAConfig) -> OpenPIConfig:
         """Convert UnifiedVLAConfig to OpenPIConfig."""
-        from crane_x7_vla.backends.openpi.config import OpenPISpecificConfig
+        from crane_x7_vla.backends.openpi.config import OpenPIConfig, OpenPISpecificConfig
 
         # Create OpenPI-specific config from backend_config if available
         openpi_specific = OpenPISpecificConfig()
@@ -144,7 +146,7 @@ class VLATrainer:
 
     def _convert_to_openpi_pytorch_config(self, config: UnifiedVLAConfig) -> OpenPIPytorchConfig:
         """Convert UnifiedVLAConfig to OpenPIPytorchConfig."""
-        from crane_x7_vla.backends.openpi_pytorch.config import OpenPIPytorchSpecificConfig
+        from crane_x7_vla.backends.openpi_pytorch.config import OpenPIPytorchConfig, OpenPIPytorchSpecificConfig
 
         # Create OpenPI PyTorch-specific config from backend_config if available
         openpi_pytorch_specific = OpenPIPytorchSpecificConfig()
@@ -169,7 +171,7 @@ class VLATrainer:
 
     def _convert_to_openvla_oft_config(self, config: UnifiedVLAConfig) -> OpenVLAOFTConfig:
         """Convert UnifiedVLAConfig to OpenVLAOFTConfig."""
-        from crane_x7_vla.backends.openvla_oft.config import OpenVLAOFTSpecificConfig
+        from crane_x7_vla.backends.openvla_oft.config import OpenVLAOFTConfig, OpenVLAOFTSpecificConfig
 
         # Create OpenVLA-OFT specific config from backend_config if available
         openvla_oft_specific = OpenVLAOFTSpecificConfig()
@@ -253,7 +255,7 @@ class VLATrainer:
         logger.info(f"Configuration saved to {path}")
 
     @classmethod
-    def from_config_file(cls, config_path: str | Path) -> "VLATrainer":
+    def from_config_file(cls, config_path: str | Path) -> VLATrainer:
         """
         Create trainer from configuration file.
 

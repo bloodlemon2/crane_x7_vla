@@ -9,7 +9,7 @@ from crane_x7_vla.core.base import VLABackend
 
 
 # Type alias for backend names
-BackendType = Literal["openvla", "openvla-oft", "openpi", "openpi-pytorch", "minivla"]
+BackendType = Literal["openvla", "openvla-oft", "openpi-pytorch", "minivla"]
 
 
 def get_backend(backend_type: BackendType) -> type[VLABackend]:
@@ -42,10 +42,6 @@ def get_backend(backend_type: BackendType) -> type[VLABackend]:
         from crane_x7_vla.backends.openvla_oft import OpenVLAOFTBackend
 
         return OpenVLAOFTBackend
-    elif backend_type == "openpi":
-        from crane_x7_vla.backends.openpi import OpenPIBackend
-
-        return OpenPIBackend
     elif backend_type == "openpi-pytorch":
         from crane_x7_vla.backends.openpi_pytorch import OpenPIPytorchBackend
 
@@ -56,7 +52,7 @@ def get_backend(backend_type: BackendType) -> type[VLABackend]:
         return MiniVLABackend
     else:
         raise ValueError(
-            f"Unknown backend: {backend_type}. " f"Available backends: openvla, openpi, openpi-pytorch, minivla"
+            f"Unknown backend: {backend_type}. " f"Available backends: openvla, openvla-oft, openpi-pytorch, minivla"
         )
 
 
