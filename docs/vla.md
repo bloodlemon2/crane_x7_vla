@@ -69,6 +69,8 @@ docker build -t crane_x7_vla .
 ```bash
 # データディレクトリをマウントしてコンテナを起動
 docker run --gpus all -it --rm \
+  --env-file .env \
+  --net host \
   -v $(pwd)/..:/workspace \
   -v ~/.cache:/home/vla/.cache \
   crane_x7_vla
