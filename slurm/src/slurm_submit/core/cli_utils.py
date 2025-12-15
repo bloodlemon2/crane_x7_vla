@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import typer
 from pydantic import ValidationError
 
-from slurm_submit.config import Settings, load_settings
+from slurm_submit.config import LocalSettings, Settings, load_local_settings, load_settings
 from slurm_submit.core.console import console
 
 if TYPE_CHECKING:
@@ -43,6 +43,35 @@ def load_settings_with_error(env_file: Path) -> Settings:
         console.print(f"[red]設定ファイルが見つかりません: {env_file}[/red]")
         console.print("[dim].env.templateをコピーして.envを作成してください[/dim]")
         raise typer.Exit(1)
+
+
+def load_local_settings_with_error(env_file: Path) -> LocalSettings:
+    """ローカル実行用設定を読み込み、エラー時はわかりやすいメッセージを表示.
+
+    Args:
+        env_file: 環境設定ファイルパス
+
+    Returns:
+        読み込まれたローカル設定
+
+    Raises:
+        typer.Exit: 設定読み込みに失敗した場合
+    """
+    try:
+        return load_local_settings(env_file)
+    except ValidationError as e:
+        console.print("[red]設定ファイルの読み込みに失敗しました[/red]")
+        for error in e.errors():
+            field = ".".join(str(loc) for loc in error["loc"])
+            msg = error["msg"]
+            console.print(f"  [yellow]{field}[/yellow]: {msg}")
+        console.print(f"\n[dim]設定ファイル: {env_file}[/dim]")
+        raise typer.Exit(1) from e
+    except FileNotFoundError:
+        # ローカルモードでは.envがなくてもデフォルト値で動作可能
+        console.print(f"[yellow]設定ファイルが見つかりません: {env_file}[/yellow]")
+        console.print("[dim]デフォルト設定を使用します[/dim]")
+        return LocalSettings()
 
 
 def create_clients(

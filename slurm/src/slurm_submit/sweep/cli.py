@@ -10,8 +10,13 @@ from typing import Annotated, Optional
 import typer
 from rich.panel import Panel
 
-from slurm_submit.core import console, create_clients, load_settings_with_error
-from slurm_submit.sweep.engine import SweepEngine, create_custom_job_generator
+from slurm_submit.core import (
+    console,
+    create_clients,
+    load_local_settings_with_error,
+    load_settings_with_error,
+)
+from slurm_submit.sweep.engine import LocalSweepEngine, SweepEngine, create_custom_job_generator
 from slurm_submit.sweep.wandb_client import WandbSweepClient, WandbSweepError
 
 
@@ -93,6 +98,13 @@ def sweep_start(
             help="実際にはジョブを投下せず、動作を確認",
         ),
     ] = False,
+    local: Annotated[
+        bool,
+        typer.Option(
+            "--local",
+            help="ローカルで実行（SSH/Slurm不要）",
+        ),
+    ] = False,
     password: Annotated[
         Optional[str],
         typer.Option(
@@ -104,6 +116,124 @@ def sweep_start(
     ] = None,
 ) -> None:
     """新規Sweepを開始."""
+    if local:
+        _sweep_start_local(
+            config=config,
+            env_file=env_file,
+            max_runs=max_runs,
+            max_concurrent=max_concurrent,
+            poll_interval=poll_interval,
+            log_interval=log_interval,
+            template=template,
+            dry_run=dry_run,
+        )
+    else:
+        _sweep_start_remote(
+            config=config,
+            env_file=env_file,
+            max_runs=max_runs,
+            max_concurrent=max_concurrent,
+            poll_interval=poll_interval,
+            log_interval=log_interval,
+            template=template,
+            dry_run=dry_run,
+            password=password,
+        )
+
+
+def _sweep_start_local(
+    config: Path,
+    env_file: Path,
+    max_runs: int,
+    max_concurrent: Optional[int],
+    poll_interval: Optional[int],
+    log_interval: Optional[int],
+    template: Optional[Path],
+    dry_run: bool,
+) -> None:
+    """ローカルモードでSweepを開始."""
+    from slurm_submit.sweep.backends.local import LocalExecutionBackend
+
+    # ローカル設定を読み込み
+    settings = load_local_settings_with_error(env_file)
+
+    # テンプレート必須チェック
+    if not template:
+        console.print("[red]ローカルモードでは --template が必須です[/red]")
+        console.print("[dim]例: --template examples/templates_local/openvla_sweep.sh[/dim]")
+        raise typer.Exit(1)
+
+    # 設定からデフォルト値を取得
+    actual_poll_interval = poll_interval if poll_interval is not None else settings.poll_interval
+    actual_log_interval = log_interval if log_interval is not None else settings.log_poll_interval
+    actual_max_concurrent = max_concurrent if max_concurrent is not None else settings.max_concurrent_jobs
+
+    # W&Bクライアントを作成してSweepを作成
+    wandb_client = WandbSweepClient(settings.wandb)
+
+    try:
+        sweep_id = wandb_client.create_sweep(config)
+    except WandbSweepError as e:
+        console.print(f"[red]Sweep作成に失敗しました: {e}[/red]")
+        raise typer.Exit(1) from e
+
+    # W&Bの実効entityを取得（テンプレートに渡すため）
+    effective_entity = wandb_client.effective_entity
+
+    console.print(
+        Panel(
+            f"Sweep ID: {sweep_id}\n"
+            f"Entity: {effective_entity or '(default)'}\n"
+            f"モード: [cyan]ローカル実行[/cyan]\n"
+            f"URL: {wandb_client.get_sweep_url(sweep_id)}",
+            title="Sweep作成完了",
+            border_style="green",
+        )
+    )
+
+    # 追加変数（実効entityを含む）
+    extra_vars = {"WANDB_ENTITY": effective_entity} if effective_entity else None
+
+    # ジョブ生成関数を作成
+    job_generator = create_custom_job_generator(
+        template_path=template,
+        env_file=env_file,
+        extra_vars=extra_vars,
+    )
+
+    # LocalExecutionBackendを使用
+    backend = LocalExecutionBackend(workdir=Path.cwd())
+
+    # LocalSweepEngineを使用
+    engine = LocalSweepEngine(
+        backend=backend,
+        wandb=wandb_client,
+        settings=settings,
+        job_generator=job_generator,
+    )
+
+    engine.run(
+        sweep_id=sweep_id,
+        max_runs=max_runs,
+        max_concurrent_jobs=actual_max_concurrent,
+        poll_interval=actual_poll_interval,
+        log_poll_interval=actual_log_interval,
+        dry_run=dry_run,
+    )
+
+
+def _sweep_start_remote(
+    config: Path,
+    env_file: Path,
+    max_runs: int,
+    max_concurrent: Optional[int],
+    poll_interval: Optional[int],
+    log_interval: Optional[int],
+    template: Optional[Path],
+    dry_run: bool,
+    password: Optional[str],
+) -> None:
+    """リモートモードでSweepを開始（既存動作）."""
     settings = load_settings_with_error(env_file)
 
     # 設定からデフォルト値を取得
@@ -236,6 +366,13 @@ def sweep_resume(
             help="実際にはジョブを投下せず、動作を確認",
         ),
     ] = False,
+    local: Annotated[
+        bool,
+        typer.Option(
+            "--local",
+            help="ローカルで実行（SSH/Slurm不要）",
+        ),
+    ] = False,
     password: Annotated[
         Optional[str],
         typer.Option(
@@ -247,6 +384,125 @@ def sweep_resume(
     ] = None,
 ) -> None:
     """既存Sweepを再開."""
+    if local:
+        _sweep_resume_local(
+            sweep_id=sweep_id,
+            env_file=env_file,
+            max_runs=max_runs,
+            max_concurrent=max_concurrent,
+            poll_interval=poll_interval,
+            log_interval=log_interval,
+            template=template,
+            dry_run=dry_run,
+        )
+    else:
+        _sweep_resume_remote(
+            sweep_id=sweep_id,
+            env_file=env_file,
+            max_runs=max_runs,
+            max_concurrent=max_concurrent,
+            poll_interval=poll_interval,
+            log_interval=log_interval,
+            template=template,
+            dry_run=dry_run,
+            password=password,
+        )
+
+
+def _sweep_resume_local(
+    sweep_id: str,
+    env_file: Path,
+    max_runs: int,
+    max_concurrent: Optional[int],
+    poll_interval: Optional[int],
+    log_interval: Optional[int],
+    template: Optional[Path],
+    dry_run: bool,
+) -> None:
+    """ローカルモードでSweepを再開."""
+    from slurm_submit.sweep.backends.local import LocalExecutionBackend
+
+    # ローカル設定を読み込み
+    settings = load_local_settings_with_error(env_file)
+
+    # テンプレート必須チェック
+    if not template:
+        console.print("[red]ローカルモードでは --template が必須です[/red]")
+        console.print("[dim]例: --template examples/templates_local/openvla_sweep.sh[/dim]")
+        raise typer.Exit(1)
+
+    # 設定からデフォルト値を取得
+    actual_poll_interval = poll_interval if poll_interval is not None else settings.poll_interval
+    actual_log_interval = log_interval if log_interval is not None else settings.log_poll_interval
+    actual_max_concurrent = max_concurrent if max_concurrent is not None else settings.max_concurrent_jobs
+
+    # W&Bクライアントを作成
+    wandb_client = WandbSweepClient(settings.wandb)
+
+    # Sweepの状態を確認
+    sweep_state = wandb_client.get_sweep_state(sweep_id)
+    if sweep_state == "FINISHED":
+        console.print("[yellow]このSweepは既に終了しています[/yellow]")
+        raise typer.Exit(0)
+
+    # W&Bの実効entityを取得（テンプレートに渡すため）
+    effective_entity = wandb_client.effective_entity
+
+    console.print(
+        Panel(
+            f"Sweep ID: {sweep_id}\n"
+            f"Entity: {effective_entity or '(default)'}\n"
+            f"状態: {sweep_state}\n"
+            f"モード: [cyan]ローカル実行[/cyan]\n"
+            f"URL: {wandb_client.get_sweep_url(sweep_id)}",
+            title="Sweep再開",
+            border_style="cyan",
+        )
+    )
+
+    # 追加変数（実効entityを含む）
+    extra_vars = {"WANDB_ENTITY": effective_entity} if effective_entity else None
+
+    # ジョブ生成関数を作成
+    job_generator = create_custom_job_generator(
+        template_path=template,
+        env_file=env_file,
+        extra_vars=extra_vars,
+    )
+
+    # LocalExecutionBackendを使用
+    backend = LocalExecutionBackend(workdir=Path.cwd())
+
+    # LocalSweepEngineを使用
+    engine = LocalSweepEngine(
+        backend=backend,
+        wandb=wandb_client,
+        settings=settings,
+        job_generator=job_generator,
+    )
+
+    engine.run(
+        sweep_id=sweep_id,
+        max_runs=max_runs,
+        max_concurrent_jobs=actual_max_concurrent,
+        poll_interval=actual_poll_interval,
+        log_poll_interval=actual_log_interval,
+        dry_run=dry_run,
+    )
+
+
+def _sweep_resume_remote(
+    sweep_id: str,
+    env_file: Path,
+    max_runs: int,
+    max_concurrent: Optional[int],
+    poll_interval: Optional[int],
+    log_interval: Optional[int],
+    template: Optional[Path],
+    dry_run: bool,
+    password: Optional[str],
+) -> None:
+    """リモートモードでSweepを再開（既存動作）."""
     settings = load_settings_with_error(env_file)
 
     # 設定からデフォルト値を取得

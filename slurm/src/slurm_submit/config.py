@@ -286,3 +286,81 @@ def load_env_vars(env_file: Path | str = ".env") -> dict[str, str]:
                 env_vars[key] = value
 
     return env_vars
+
+
+class LocalSettings(BaseSettings):
+    """ローカル実行用の最小設定.
+
+    SSH/Slurm設定を必要とせず、W&Bとトレーニング設定のみを読み込む。
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # W&B設定
+    wandb_api_key: str | None = Field(default=None, alias="WANDB_API_KEY")
+    wandb_entity: str | None = Field(default=None, alias="WANDB_ENTITY")
+    wandb_project: str | None = Field(default=None, alias="WANDB_PROJECT")
+
+    # トレーニング設定
+    data_root: str = Field(default="./data", alias="DATA_ROOT")
+    output_dir: str = Field(default="./outputs", alias="OUTPUT_DIR")
+    max_steps: int = Field(default=10000, alias="MAX_STEPS")
+    save_interval: int = Field(default=500, alias="SAVE_INTERVAL")
+    eval_interval: int = Field(default=100, alias="EVAL_INTERVAL")
+
+    # ローカル実行設定
+    poll_interval: int = Field(default=10, alias="LOCAL_POLL_INTERVAL")
+    log_poll_interval: int = Field(default=2, alias="LOCAL_LOG_POLL_INTERVAL")
+    max_concurrent_jobs: int = Field(default=1, alias="LOCAL_MAX_CONCURRENT_JOBS")
+
+    @field_validator(
+        "wandb_api_key",
+        "wandb_entity",
+        "wandb_project",
+        mode="before",
+    )
+    @classmethod
+    def empty_to_none(cls, v: str | None) -> str | None:
+        """空文字列をNoneに変換."""
+        if v == "":
+            return None
+        return v
+
+    @property
+    def wandb(self) -> WandbConfig:
+        """W&B設定を取得."""
+        return WandbConfig(
+            api_key=self.wandb_api_key if self.wandb_api_key else None,
+            entity=self.wandb_entity if self.wandb_entity else None,
+            project=self.wandb_project if self.wandb_project else None,
+        )
+
+    @property
+    def training(self) -> TrainingConfig:
+        """トレーニング設定を取得."""
+        return TrainingConfig(
+            data_root=Path(self.data_root),
+            output_dir=Path(self.output_dir),
+            max_steps=self.max_steps,
+            save_interval=self.save_interval,
+            eval_interval=self.eval_interval,
+        )
+
+
+def load_local_settings(env_file: Path | str = ".env") -> LocalSettings:
+    """ローカル実行用設定を読み込む.
+
+    Args:
+        env_file: .envファイルのパス
+
+    Returns:
+        LocalSettings: 読み込まれた設定
+
+    Raises:
+        ValidationError: 設定のバリデーションに失敗した場合
+    """
+    return LocalSettings(_env_file=str(env_file))
