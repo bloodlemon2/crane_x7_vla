@@ -194,15 +194,30 @@ class CraneX7Pi0Dataset(IterableDataset):
             return
 
         action_stats = self.dataset_statistics.get("action", {})
-        if "q01" in action_stats and "q99" in action_stats:
-            self.action_normalizer.stats = {
-                "q_low": np.array(action_stats["q01"]),
-                "q_high": np.array(action_stats["q99"]),
-                "range": np.array(action_stats["q99"]) - np.array(action_stats["q01"]),
-            }
-            self.action_normalizer.stats["range"] = np.where(
-                self.action_normalizer.stats["range"] < 1e-6, 1.0, self.action_normalizer.stats["range"]
-            )
+
+        if self.normalization_mode == "zscore":
+            # Use mean and std for z-score normalization
+            if "mean" in action_stats and "std" in action_stats:
+                std = np.array(action_stats["std"])
+                self.action_normalizer.stats = {
+                    "mean": np.array(action_stats["mean"]),
+                    "std": np.where(std < 1e-6, 1.0, std),
+                }
+            else:
+                logger.warning("zscore normalization requested but mean/std not in statistics")
+        else:
+            # Use quantiles for quantile normalization
+            if "q01" in action_stats and "q99" in action_stats:
+                self.action_normalizer.stats = {
+                    "q_low": np.array(action_stats["q01"]),
+                    "q_high": np.array(action_stats["q99"]),
+                    "range": np.array(action_stats["q99"]) - np.array(action_stats["q01"]),
+                }
+                self.action_normalizer.stats["range"] = np.where(
+                    self.action_normalizer.stats["range"] < 1e-6, 1.0, self.action_normalizer.stats["range"]
+                )
+            else:
+                logger.warning("quantile normalization requested but q01/q99 not in statistics")
 
     def _load_episodes(self) -> list[list[dict[str, Any]]]:
         """Load all episodes from TFRecord files."""
