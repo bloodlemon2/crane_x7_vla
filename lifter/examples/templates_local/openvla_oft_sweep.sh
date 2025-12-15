@@ -3,16 +3,16 @@
 # SPDX-FileCopyrightText: 2025 nop
 #
 # =============================================================================
-# Pi0 Local Sweep Template (Docker)
+# OpenVLA-OFT Local Sweep Template (Docker)
 # =============================================================================
 #
 # ローカル環境でW&B SweepをDockerコンテナ内で実行するためのテンプレート。
-# Pi0: PaliGemma + Expert Gemma + Flow Matchingベースのモデル
+# OpenVLA-OFT: L1回帰アクションヘッド + アクションチャンキング + FiLM + Proprio入力
 #
 # 使用方法:
-#   lifter sweep start examples/sweeps/sweep_pi0.yaml \
+#   lifter sweep start examples/sweeps/sweep_openvla_oft.yaml \
 #     --local \
-#     --template examples/templates_local/pi0_sweep.sh \
+#     --template examples/templates_local/openvla_oft_sweep.sh \
 #     --max-runs 5
 #
 # 必要な環境変数:
@@ -20,7 +20,7 @@
 #   - DATA_ROOT: データディレクトリ（ホスト側パス）
 #   - OUTPUT_DIR: 出力ディレクトリ（ホスト側パス）
 #   - WANDB_API_KEY, WANDB_ENTITY, WANDB_PROJECT: W&B設定
-#   - HF_TOKEN: Hugging Face APIトークン（gemmaモデル用）
+#   - HF_TOKEN: Hugging Face APIトークン（OpenVLAモデル用）
 #
 # =============================================================================
 
@@ -96,6 +96,7 @@ echo "=== Starting W&B Sweep Agent in Docker ==="
 
 # crane_x7_vla の agent コマンドを使用してSweepからパラメータを取得し、トレーニングを実行
 # wandb.agent()が内部で呼ばれ、RunがSweepに正しく関連付けられる
+# OpenVLA-OFTはL1回帰アクションヘッドを使用
 docker run --rm \
     --gpus all \
     --shm-size=16g \
@@ -109,13 +110,13 @@ docker run --rm \
     -v "${DATA_ROOT}:${CONTAINER_DATA_ROOT}:ro" \
     -v "${OUTPUT_DIR}:${CONTAINER_OUTPUT_DIR}" \
     "${CONTAINER_IMAGE}" \
-    python -m crane_x7_vla.training.cli agent pi0 \
+    python -m crane_x7_vla.training.cli agent openvla-oft \
         --sweep-id "{{SWEEP_ID}}" \
         --entity "${WANDB_ENTITY}" \
         --project "${WANDB_PROJECT}" \
         --data-root "${CONTAINER_DATA_ROOT}" \
         --output-dir "${CONTAINER_OUTPUT_DIR}/checkpoints" \
-        --experiment-name "crane_x7_pi0_sweep_local" \
+        --experiment-name "crane_x7_sweep_oft_local" \
         --training-max-steps "${MAX_STEPS}" \
         --training-save-interval "${SAVE_INTERVAL}" \
         --training-eval-interval "${EVAL_INTERVAL}" \

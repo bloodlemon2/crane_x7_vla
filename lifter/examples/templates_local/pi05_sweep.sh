@@ -117,7 +117,11 @@ docker run --rm \
         --data-root "${CONTAINER_DATA_ROOT}" \
         --output-dir "${CONTAINER_OUTPUT_DIR}/checkpoints" \
         --experiment-name "crane_x7_pi05_sweep_local" \
-        --max-steps "${MAX_STEPS}"
+        --training-max-steps "${MAX_STEPS}" \
+        --training-save-interval "${SAVE_INTERVAL}" \
+        --training-eval-interval "${EVAL_INTERVAL}" \
+        --overfitting-overfit-check-interval "${OVERFIT_CHECK_INTERVAL}" \
+        --training-gradient-checkpointing
 
 echo "=== Job Completed ==="
 echo "End time: $(date)"

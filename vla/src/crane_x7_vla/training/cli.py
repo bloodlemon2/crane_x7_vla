@@ -7,6 +7,8 @@ Command-line interface for CRANE-X7 VLA training.
 
 Provides a unified CLI for training different VLA backends (OpenVLA, OpenPI).
 Supports both simplified mode (--config file) and full mode with backend-specific arguments.
+
+CLI arguments are automatically generated from config dataclasses.
 """
 
 from __future__ import annotations
@@ -17,8 +19,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Only import core config at module level - other configs imported lazily
-from crane_x7_vla.core.config.base import CameraConfig, DataConfig, TrainingConfig, UnifiedVLAConfig
+from crane_x7_vla.core.config.base import (
+    CameraConfig,
+    DataConfig,
+    OverfittingConfig,
+    TrainingConfig,
+    UnifiedVLAConfig,
+)
+from crane_x7_vla.training.cli_utils import (
+    add_dataclass_arguments,
+    apply_args_to_config,
+    apply_sweep_config_to_config,
+)
 
 
 def setup_logging(verbose: bool = False):
@@ -155,17 +167,9 @@ def train_command(args: argparse.Namespace) -> None:
             experiment_name=args.experiment_name,
         )
 
-    # Apply CLI overrides
-    if args.batch_size is not None:
-        config.training.batch_size = args.batch_size
-    if args.learning_rate is not None:
-        config.training.learning_rate = args.learning_rate
-    if args.num_epochs is not None:
-        config.training.num_epochs = args.num_epochs
-    if args.max_steps is not None:
-        config.training.max_steps = args.max_steps
-    if args.grad_accumulation_steps is not None:
-        config.training.grad_accumulation_steps = args.grad_accumulation_steps
+    # Apply CLI overrides automatically from TrainingConfig and OverfittingConfig
+    apply_args_to_config(args, config.training, prefix="training")
+    apply_args_to_config(args, config.overfitting, prefix="overfitting")
 
     # Save configuration
     config_save_path = Path(config.output_dir) / "config.yaml"
@@ -241,40 +245,12 @@ def agent_command(args: argparse.Namespace) -> None:
             experiment_name=args.experiment_name,
         )
 
-        # Apply sweep parameters to config
-        # Training parameters
-        if "learning_rate" in sweep_config:
-            config.training.learning_rate = sweep_config["learning_rate"]
-        if "batch_size" in sweep_config:
-            config.training.batch_size = sweep_config["batch_size"]
-        if "grad_accumulation_steps" in sweep_config:
-            config.training.grad_accumulation_steps = sweep_config["grad_accumulation_steps"]
-        if "weight_decay" in sweep_config:
-            config.training.weight_decay = sweep_config["weight_decay"]
-        if "warmup_ratio" in sweep_config:
-            config.training.warmup_ratio = sweep_config["warmup_ratio"]
+        # Apply sweep parameters automatically
+        apply_sweep_config_to_config(sweep_config, config)
 
-        # Apply max_steps from CLI (fixed parameter)
-        if args.max_steps is not None:
-            config.training.max_steps = args.max_steps
-
-        # Backend-specific parameters
-        if backend in ("pi0", "pi0.5") and hasattr(config, "pi0"):
-            if "lora_rank" in sweep_config:
-                config.pi0.lora_rank = sweep_config["lora_rank"]
-            if "action_horizon" in sweep_config:
-                config.pi0.action_horizon = sweep_config["action_horizon"]
-            if "num_flow_steps" in sweep_config:
-                config.pi0.num_flow_steps = sweep_config["num_flow_steps"]
-        elif backend == "openvla" and hasattr(config, "openvla"):
-            if "lora_rank" in sweep_config:
-                config.openvla.lora_rank = sweep_config["lora_rank"]
-        elif backend == "minivla" and hasattr(config, "minivla"):
-            if "lora_rank" in sweep_config:
-                config.minivla.lora_rank = sweep_config["lora_rank"]
-        elif backend == "openvla-oft" and hasattr(config, "openvla_oft"):
-            if "lora_rank" in sweep_config:
-                config.openvla_oft.lora_rank = sweep_config["lora_rank"]
+        # Apply fixed CLI parameters (override sweep config)
+        apply_args_to_config(args, config.training, prefix="training")
+        apply_args_to_config(args, config.overfitting, prefix="overfitting")
 
         # Save configuration
         config_save_path = Path(config.output_dir) / f"config_{run.id}.yaml"
@@ -302,6 +278,48 @@ def agent_command(args: argparse.Namespace) -> None:
     wandb.agent(sweep_path, function=run_sweep_training, count=1)
 
 
+def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add common arguments for data and output paths."""
+    parser.add_argument("--config", type=str, help="Path to configuration file (YAML)")
+    parser.add_argument("--data-root", type=str, help="Path to training data directory")
+    parser.add_argument("--output-dir", type=str, default="./outputs", help="Output directory")
+    parser.add_argument("--experiment-name", type=str, default="crane_x7_vla", help="Experiment name")
+
+
+def _add_training_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add training configuration arguments automatically from TrainingConfig."""
+    add_dataclass_arguments(
+        parser,
+        TrainingConfig,
+        prefix="training",
+        # Include commonly used training parameters
+        include_fields={
+            "batch_size",
+            "learning_rate",
+            "num_epochs",
+            "max_steps",
+            "gradient_accumulation_steps",
+            "weight_decay",
+            "warmup_steps",
+            "max_grad_norm",
+            "gradient_checkpointing",
+            "save_interval",
+            "eval_interval",
+            "log_interval",
+            "mixed_precision",
+        },
+    )
+
+
+def _add_overfitting_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add overfitting configuration arguments automatically from OverfittingConfig."""
+    add_dataclass_arguments(
+        parser,
+        OverfittingConfig,
+        prefix="overfitting",
+    )
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -312,14 +330,12 @@ Examples:
   # Train with OpenVLA using default settings
   python -m crane_x7_vla.training.cli train openvla --data-root ./data
 
-  # Train with OpenPI
-  python -m crane_x7_vla.training.cli train openpi --data-root ./data
+  # Train with overrides (auto-generated from config)
+  python -m crane_x7_vla.training.cli train openvla --data-root ./data \\
+      --training-batch-size 8 --training-max-steps 1000
 
   # Train with configuration file
   python -m crane_x7_vla.training.cli train openvla --config my_config.yaml
-
-  # Train with overrides
-  python -m crane_x7_vla.training.cli train openpi --data-root ./data --batch-size 8 --max-steps 1000
 
   # Generate default configuration
   python -m crane_x7_vla.training.cli config --backend openvla --output openvla_config.yaml
@@ -336,6 +352,9 @@ Examples:
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
+    # Define available backends
+    backends = ["openvla", "minivla", "openvla-oft", "pi0", "pi0.5"]
+
     # =====================
     # Train command
     # =====================
@@ -346,27 +365,15 @@ Examples:
     )
     train_subparsers = train_parser.add_subparsers(dest="backend", help="VLA backend to use")
 
-    # Define available backends
-    backends = ["openvla", "minivla", "openvla-oft", "pi0", "pi0.5"]
-
     for backend in backends:
         backend_parser = train_subparsers.add_parser(
             backend,
             help=f"Train with {backend} backend",
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
-        # Common arguments
-        backend_parser.add_argument("--config", type=str, help="Path to configuration file (YAML)")
-        backend_parser.add_argument("--data-root", type=str, help="Path to training data directory")
-        backend_parser.add_argument("--output-dir", type=str, default="./outputs", help="Output directory")
-        backend_parser.add_argument("--experiment-name", type=str, default="crane_x7_vla", help="Experiment name")
-
-        # Training overrides
-        backend_parser.add_argument("--batch-size", type=int, help="Batch size")
-        backend_parser.add_argument("--learning-rate", type=float, help="Learning rate")
-        backend_parser.add_argument("--num-epochs", type=int, help="Number of epochs")
-        backend_parser.add_argument("--max-steps", type=int, help="Maximum training steps")
-        backend_parser.add_argument("--grad-accumulation-steps", type=int, help="Gradient accumulation steps")
+        _add_common_arguments(backend_parser)
+        _add_training_arguments(backend_parser)
+        _add_overfitting_arguments(backend_parser)
 
     # =====================
     # Evaluate command
@@ -422,8 +429,9 @@ Examples:
             "--experiment-name", type=str, default="crane_x7_vla_sweep", help="Experiment name"
         )
 
-        # Fixed training parameters (not swept)
-        agent_backend_parser.add_argument("--max-steps", type=int, help="Maximum training steps (fixed, not swept)")
+        # Auto-generate training and overfitting arguments
+        _add_training_arguments(agent_backend_parser)
+        _add_overfitting_arguments(agent_backend_parser)
 
     args = parser.parse_args()
 
