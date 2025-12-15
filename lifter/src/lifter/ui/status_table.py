@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from lifter.clients.slurm import JobInfo
 
 
-def print_job_status_table(jobs: list["JobInfo"]) -> None:
+def print_job_status_table(jobs: list[JobInfo]) -> None:
     """ジョブ状態をテーブル形式で表示.
 
     Args:
@@ -37,13 +37,7 @@ def print_job_status_table(jobs: list["JobInfo"]) -> None:
     table.add_column("Nodelist(Reason)", style="dim")
 
     for job in jobs:
-        state_style = (
-            "green"
-            if job.is_running
-            else "yellow"
-            if job.is_pending
-            else "red"
-        )
+        state_style = "green" if job.is_running else "yellow" if job.is_pending else "red"
         table.add_row(
             job.job_id,
             job.name,

@@ -138,11 +138,13 @@ class SweepEngine:
         if "jobs" not in state:
             state["jobs"] = []
 
-        state["jobs"].append({
-            "run_number": run_number,
-            "job_id": job_id,
-            "timestamp": generate_timestamp(),
-        })
+        state["jobs"].append(
+            {
+                "run_number": run_number,
+                "job_id": job_id,
+                "timestamp": generate_timestamp(),
+            }
+        )
 
         # 保存
         with open(state_file, "w") as f:
@@ -301,19 +303,12 @@ class SweepEngine:
                     completed_runs += 1
                     # 結果をログ
                     if state == "COMPLETED":
-                        console.print(
-                            f"[green]✓ Run {run_number} (Job {job_id}) 完了[/green]"
-                        )
+                        console.print(f"[green]✓ Run {run_number} (Job {job_id}) 完了[/green]")
                     else:
-                        console.print(
-                            f"[red]✗ Run {run_number} (Job {job_id}) 失敗: {state}[/red]"
-                        )
+                        console.print(f"[red]✗ Run {run_number} (Job {job_id}) 失敗: {state}[/red]")
 
             # 新しいジョブを投下（上限まで）
-            while (
-                len(running_jobs) < max_concurrent_jobs
-                and submitted_runs < max_runs
-            ):
+            while len(running_jobs) < max_concurrent_jobs and submitted_runs < max_runs:
                 submitted_runs += 1
                 run_number = submitted_runs
 
@@ -327,15 +322,11 @@ class SweepEngine:
                     continue
 
                 try:
-                    script_name = (
-                        f"sweep_{sweep_id[:8]}_{run_number:03d}_{generate_timestamp()}.sh"
-                    )
+                    script_name = f"sweep_{sweep_id[:8]}_{run_number:03d}_{generate_timestamp()}.sh"
                     job_id = self.slurm.submit_script_content(script_content, script_name)
                     running_jobs[job_id] = run_number
                     self._save_state(sweep_id, run_number, job_id)
-                    console.print(
-                        f"[dim]Run {run_number}: Job {job_id} を投下しました[/dim]"
-                    )
+                    console.print(f"[dim]Run {run_number}: Job {job_id} を投下しました[/dim]")
                 except SlurmError as e:
                     console.print(f"[red]Run {run_number} の投下に失敗: {e}[/red]")
 
@@ -359,17 +350,11 @@ class SweepEngine:
                     del running_jobs[job_id]
                     completed_runs += 1
                     if state == "COMPLETED":
-                        console.print(
-                            f"[green]✓ Run {run_number} (Job {job_id}) 完了[/green]"
-                        )
+                        console.print(f"[green]✓ Run {run_number} (Job {job_id}) 完了[/green]")
                     else:
-                        console.print(
-                            f"[red]✗ Run {run_number} (Job {job_id}) 失敗: {state}[/red]"
-                        )
+                        console.print(f"[red]✗ Run {run_number} (Job {job_id}) 失敗: {state}[/red]")
             if running_jobs:
-                console.print(
-                    f"[dim]残り: {len(running_jobs)}件[/dim]"
-                )
+                console.print(f"[dim]残り: {len(running_jobs)}件[/dim]")
                 time.sleep(poll_interval)
 
         console.print(f"\n[bold green]Sweep完了: {completed_runs}回実行しました[/bold green]")
@@ -384,9 +369,9 @@ class LocalSweepEngine:
 
     def __init__(
         self,
-        backend: "LocalExecutionBackend",
+        backend: LocalExecutionBackend,
         wandb: WandbSweepClient,
-        settings: "LocalSettings",
+        settings: LocalSettings,
         job_generator: JobGenerator | None = None,
     ):
         """エンジンを初期化.
@@ -412,7 +397,7 @@ class LocalSweepEngine:
         """
         wandb_config = self.settings.wandb
 
-        script = f"""#!/bin/bash
+        script = """#!/bin/bash
 set -euo pipefail
 
 export PYTHONUNBUFFERED=1
@@ -461,12 +446,14 @@ python -m crane_x7_vla.training.cli agent openvla \\
         if "jobs" not in state:
             state["jobs"] = []
 
-        state["jobs"].append({
-            "run_number": run_number,
-            "job_id": job_id,
-            "timestamp": generate_timestamp(),
-            "mode": "local",
-        })
+        state["jobs"].append(
+            {
+                "run_number": run_number,
+                "job_id": job_id,
+                "timestamp": generate_timestamp(),
+                "mode": "local",
+            }
+        )
 
         # 保存
         with open(state_file, "w") as f:
@@ -623,19 +610,12 @@ python -m crane_x7_vla.training.cli agent openvla \\
                     completed_runs += 1
                     # 結果をログ
                     if state == "COMPLETED":
-                        console.print(
-                            f"[green]✓ Run {run_number} (Job {job_id}) 完了[/green]"
-                        )
+                        console.print(f"[green]✓ Run {run_number} (Job {job_id}) 完了[/green]")
                     else:
-                        console.print(
-                            f"[red]✗ Run {run_number} (Job {job_id}) 失敗: {state}[/red]"
-                        )
+                        console.print(f"[red]✗ Run {run_number} (Job {job_id}) 失敗: {state}[/red]")
 
             # 新しいジョブを投下（上限まで）
-            while (
-                len(running_jobs) < max_concurrent_jobs
-                and submitted_runs < max_runs
-            ):
+            while len(running_jobs) < max_concurrent_jobs and submitted_runs < max_runs:
                 submitted_runs += 1
                 run_number = submitted_runs
 
@@ -653,9 +633,7 @@ python -m crane_x7_vla.training.cli agent openvla \\
                     job_id = self.backend.submit_job(script_content, job_name)
                     running_jobs[job_id] = run_number
                     self._save_state(sweep_id, run_number, job_id)
-                    console.print(
-                        f"[dim]Run {run_number}: Job {job_id} を投下しました[/dim]"
-                    )
+                    console.print(f"[dim]Run {run_number}: Job {job_id} を投下しました[/dim]")
                 except Exception as e:
                     console.print(f"[red]Run {run_number} の投下に失敗: {e}[/red]")
 
@@ -679,17 +657,11 @@ python -m crane_x7_vla.training.cli agent openvla \\
                     del running_jobs[job_id]
                     completed_runs += 1
                     if state == "COMPLETED":
-                        console.print(
-                            f"[green]✓ Run {run_number} (Job {job_id}) 完了[/green]"
-                        )
+                        console.print(f"[green]✓ Run {run_number} (Job {job_id}) 完了[/green]")
                     else:
-                        console.print(
-                            f"[red]✗ Run {run_number} (Job {job_id}) 失敗: {state}[/red]"
-                        )
+                        console.print(f"[red]✗ Run {run_number} (Job {job_id}) 失敗: {state}[/red]")
             if running_jobs:
-                console.print(
-                    f"[dim]残り: {len(running_jobs)}件[/dim]"
-                )
+                console.print(f"[dim]残り: {len(running_jobs)}件[/dim]")
                 time.sleep(poll_interval)
 
         console.print(f"\n[bold green]Sweep完了: {completed_runs}回実行しました[/bold green]")

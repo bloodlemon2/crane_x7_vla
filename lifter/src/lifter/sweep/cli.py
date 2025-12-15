@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.panel import Panel
@@ -18,7 +18,6 @@ from lifter.core import (
 )
 from lifter.sweep.engine import LocalSweepEngine, SweepEngine, create_custom_job_generator
 from lifter.sweep.wandb_client import WandbSweepClient, WandbSweepError
-
 
 sweep_app = typer.Typer(
     name="sweep",
@@ -56,7 +55,7 @@ def sweep_start(
         ),
     ] = 10,
     max_concurrent: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "--max-concurrent",
             "-c",
@@ -64,7 +63,7 @@ def sweep_start(
         ),
     ] = None,
     poll_interval: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "--poll-interval",
             "-i",
@@ -72,7 +71,7 @@ def sweep_start(
         ),
     ] = None,
     log_interval: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "--log-interval",
             "-l",
@@ -80,7 +79,7 @@ def sweep_start(
         ),
     ] = None,
     template: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option(
             "--template",
             "-t",
@@ -106,7 +105,7 @@ def sweep_start(
         ),
     ] = False,
     password: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--password",
             "-p",
@@ -145,10 +144,10 @@ def _sweep_start_local(
     config: Path,
     env_file: Path,
     max_runs: int,
-    max_concurrent: Optional[int],
-    poll_interval: Optional[int],
-    log_interval: Optional[int],
-    template: Optional[Path],
+    max_concurrent: int | None,
+    poll_interval: int | None,
+    log_interval: int | None,
+    template: Path | None,
     dry_run: bool,
 ) -> None:
     """ローカルモードでSweepを開始."""
@@ -166,7 +165,9 @@ def _sweep_start_local(
     # 設定からデフォルト値を取得
     actual_poll_interval = poll_interval if poll_interval is not None else settings.poll_interval
     actual_log_interval = log_interval if log_interval is not None else settings.log_poll_interval
-    actual_max_concurrent = max_concurrent if max_concurrent is not None else settings.max_concurrent_jobs
+    actual_max_concurrent = (
+        max_concurrent if max_concurrent is not None else settings.max_concurrent_jobs
+    )
 
     # W&Bクライアントを作成してSweepを作成
     wandb_client = WandbSweepClient(settings.wandb)
@@ -226,20 +227,26 @@ def _sweep_start_remote(
     config: Path,
     env_file: Path,
     max_runs: int,
-    max_concurrent: Optional[int],
-    poll_interval: Optional[int],
-    log_interval: Optional[int],
-    template: Optional[Path],
+    max_concurrent: int | None,
+    poll_interval: int | None,
+    log_interval: int | None,
+    template: Path | None,
     dry_run: bool,
-    password: Optional[str],
+    password: str | None,
 ) -> None:
     """リモートモードでSweepを開始（既存動作）."""
     settings = load_settings_with_error(env_file)
 
     # 設定からデフォルト値を取得
-    actual_poll_interval = poll_interval if poll_interval is not None else settings.slurm.poll_interval
-    actual_log_interval = log_interval if log_interval is not None else settings.slurm.log_poll_interval
-    actual_max_concurrent = max_concurrent if max_concurrent is not None else settings.slurm.max_concurrent_jobs
+    actual_poll_interval = (
+        poll_interval if poll_interval is not None else settings.slurm.poll_interval
+    )
+    actual_log_interval = (
+        log_interval if log_interval is not None else settings.slurm.log_poll_interval
+    )
+    actual_max_concurrent = (
+        max_concurrent if max_concurrent is not None else settings.slurm.max_concurrent_jobs
+    )
 
     # W&Bクライアントを作成してSweepを作成
     wandb_client = WandbSweepClient(settings.wandb)
@@ -324,7 +331,7 @@ def sweep_resume(
         ),
     ] = 10,
     max_concurrent: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "--max-concurrent",
             "-c",
@@ -332,7 +339,7 @@ def sweep_resume(
         ),
     ] = None,
     poll_interval: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "--poll-interval",
             "-i",
@@ -340,7 +347,7 @@ def sweep_resume(
         ),
     ] = None,
     log_interval: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "--log-interval",
             "-l",
@@ -348,7 +355,7 @@ def sweep_resume(
         ),
     ] = None,
     template: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option(
             "--template",
             "-t",
@@ -374,7 +381,7 @@ def sweep_resume(
         ),
     ] = False,
     password: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--password",
             "-p",
@@ -413,10 +420,10 @@ def _sweep_resume_local(
     sweep_id: str,
     env_file: Path,
     max_runs: int,
-    max_concurrent: Optional[int],
-    poll_interval: Optional[int],
-    log_interval: Optional[int],
-    template: Optional[Path],
+    max_concurrent: int | None,
+    poll_interval: int | None,
+    log_interval: int | None,
+    template: Path | None,
     dry_run: bool,
 ) -> None:
     """ローカルモードでSweepを再開."""
@@ -434,7 +441,9 @@ def _sweep_resume_local(
     # 設定からデフォルト値を取得
     actual_poll_interval = poll_interval if poll_interval is not None else settings.poll_interval
     actual_log_interval = log_interval if log_interval is not None else settings.log_poll_interval
-    actual_max_concurrent = max_concurrent if max_concurrent is not None else settings.max_concurrent_jobs
+    actual_max_concurrent = (
+        max_concurrent if max_concurrent is not None else settings.max_concurrent_jobs
+    )
 
     # W&Bクライアントを作成
     wandb_client = WandbSweepClient(settings.wandb)
@@ -495,20 +504,26 @@ def _sweep_resume_remote(
     sweep_id: str,
     env_file: Path,
     max_runs: int,
-    max_concurrent: Optional[int],
-    poll_interval: Optional[int],
-    log_interval: Optional[int],
-    template: Optional[Path],
+    max_concurrent: int | None,
+    poll_interval: int | None,
+    log_interval: int | None,
+    template: Path | None,
     dry_run: bool,
-    password: Optional[str],
+    password: str | None,
 ) -> None:
     """リモートモードでSweepを再開（既存動作）."""
     settings = load_settings_with_error(env_file)
 
     # 設定からデフォルト値を取得
-    actual_poll_interval = poll_interval if poll_interval is not None else settings.slurm.poll_interval
-    actual_log_interval = log_interval if log_interval is not None else settings.slurm.log_poll_interval
-    actual_max_concurrent = max_concurrent if max_concurrent is not None else settings.slurm.max_concurrent_jobs
+    actual_poll_interval = (
+        poll_interval if poll_interval is not None else settings.slurm.poll_interval
+    )
+    actual_log_interval = (
+        log_interval if log_interval is not None else settings.slurm.log_poll_interval
+    )
+    actual_max_concurrent = (
+        max_concurrent if max_concurrent is not None else settings.slurm.max_concurrent_jobs
+    )
 
     # W&Bクライアントを作成
     wandb_client = WandbSweepClient(settings.wandb)

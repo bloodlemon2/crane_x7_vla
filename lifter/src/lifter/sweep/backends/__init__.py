@@ -7,7 +7,8 @@ SlurmやローカルなどのジョブExecutionバックエンドを提供。
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from lifter.clients.slurm import JobInfo
@@ -49,7 +50,7 @@ class ExecutionBackend(Protocol):
         job_id: str,
         poll_interval: int = 60,
         log_poll_interval: int = 5,
-        callback: Callable[["JobInfo | None", str | None], None] | None = None,
+        callback: Callable[[JobInfo | None, str | None], None] | None = None,
         show_log: bool = True,
     ) -> str:
         """ジョブ完了を待機.
@@ -67,6 +68,6 @@ class ExecutionBackend(Protocol):
         ...
 
 
-from lifter.sweep.backends.local import LocalExecutionBackend
+from lifter.sweep.backends.local import LocalExecutionBackend  # noqa: E402
 
 __all__ = ["ExecutionBackend", "LocalExecutionBackend"]

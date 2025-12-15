@@ -118,16 +118,25 @@ class OpenVLAAdapter(nn.Module):
         self._model = self._model.to(self.device)
 
         # Initialize value head
-        hidden_size = self._model.config.hidden_size if hasattr(self._model.config, "hidden_size") else 4096
-        self._value_head = nn.Sequential(
-            nn.Linear(hidden_size, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-        ).to(self.device).to(self.torch_dtype)
+        hidden_size = (
+            self._model.config.hidden_size
+            if hasattr(self._model.config, "hidden_size")
+            else 4096
+        )
+        self._value_head = (
+            nn.Sequential(
+                nn.Linear(hidden_size, 256),
+                nn.ReLU(),
+                nn.Linear(256, 1),
+            )
+            .to(self.device)
+            .to(self.torch_dtype)
+        )
 
         # Try to get action tokenizer
         try:
             from prismatic.models.action_tokenizer import ActionTokenizer
+
             self._action_tokenizer = ActionTokenizer(self._processor.tokenizer)
         except ImportError:
             logger.warning("ActionTokenizer not available, using default tokenization")
@@ -139,13 +148,23 @@ class OpenVLAAdapter(nn.Module):
         try:
             from peft import LoraConfig, get_peft_model
         except ImportError:
-            raise ImportError("peft is required for LoRA. Install with: pip install peft")
+            raise ImportError(
+                "peft is required for LoRA. Install with: pip install peft"
+            )
 
         lora_config = LoraConfig(
             r=self.lora_rank,
             lora_alpha=self.lora_alpha,
             lora_dropout=self.lora_dropout,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            target_modules=[
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ],
             bias="none",
             task_type="CAUSAL_LM",
         )
@@ -177,8 +196,12 @@ class OpenVLAAdapter(nn.Module):
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         # Check checkpoint format
-        has_lora = (checkpoint_path / "lora_adapters").exists() or (checkpoint_path / "adapter_model.safetensors").exists()
-        has_merged = (checkpoint_path / "model.safetensors").exists() or (checkpoint_path / "pytorch_model.bin").exists()
+        has_lora = (checkpoint_path / "lora_adapters").exists() or (
+            checkpoint_path / "adapter_model.safetensors"
+        ).exists()
+        has_merged = (checkpoint_path / "model.safetensors").exists() or (
+            checkpoint_path / "pytorch_model.bin"
+        ).exists()
 
         if has_lora:
             return cls._load_lora_checkpoint(checkpoint_path, device)
@@ -201,7 +224,9 @@ class OpenVLAAdapter(nn.Module):
         if config_file.exists():
             with open(config_file) as f:
                 adapter_config = json.load(f)
-            base_model = adapter_config.get("base_model_name_or_path", "openvla/openvla-7b")
+            base_model = adapter_config.get(
+                "base_model_name_or_path", "openvla/openvla-7b"
+            )
         else:
             base_model = "openvla/openvla-7b"
 
@@ -217,7 +242,11 @@ class OpenVLAAdapter(nn.Module):
         try:
             from peft import PeftModel
 
-            lora_path = checkpoint_path / "lora_adapters" if (checkpoint_path / "lora_adapters").exists() else checkpoint_path
+            lora_path = (
+                checkpoint_path / "lora_adapters"
+                if (checkpoint_path / "lora_adapters").exists()
+                else checkpoint_path
+            )
             adapter._model = PeftModel.from_pretrained(
                 adapter._model,
                 str(lora_path),
@@ -321,7 +350,7 @@ class OpenVLAAdapter(nn.Module):
             )
 
         # Decode action
-        generated_ids = outputs.sequences[0, inputs["input_ids"].shape[1]:]
+        generated_ids = outputs.sequences[0, inputs["input_ids"].shape[1] :]
         action = self._decode_action(generated_ids)
 
         # Compute log probability (simplified)
@@ -336,11 +365,13 @@ class OpenVLAAdapter(nn.Module):
         """Decode action tokens to continuous action."""
         if self._action_tokenizer is not None:
             try:
-                action = self._action_tokenizer.decode_token_ids_to_actions(token_ids.cpu().numpy())
+                action = self._action_tokenizer.decode_token_ids_to_actions(
+                    token_ids.cpu().numpy()
+                )
                 if self.action_std is not None:
                     # Denormalize
                     action = action * self.action_std + self.action_mean
-                return action[:self.ACTION_DIM]
+                return action[: self.ACTION_DIM]
             except Exception:
                 pass
 
@@ -349,7 +380,7 @@ class OpenVLAAdapter(nn.Module):
         try:
             # Try to parse as comma-separated values
             values = [float(x.strip()) for x in text.split(",")]
-            action = np.array(values[:self.ACTION_DIM])
+            action = np.array(values[: self.ACTION_DIM])
         except Exception:
             # Return zero action on failure
             action = np.zeros(self.ACTION_DIM)
@@ -411,9 +442,11 @@ class OpenVLAAdapter(nn.Module):
 
             # Create a simple projection if needed
             if not hasattr(self, "_state_projection"):
-                self._state_projection = nn.Linear(state_dim, hidden_size).to(
-                    self.device
-                ).to(self.torch_dtype)
+                self._state_projection = (
+                    nn.Linear(state_dim, hidden_size)
+                    .to(self.device)
+                    .to(self.torch_dtype)
+                )
 
             # Project states and compute values
             projected = self._state_projection(states.to(self.torch_dtype))
@@ -421,8 +454,10 @@ class OpenVLAAdapter(nn.Module):
         else:
             # Fallback: create trainable values via value head
             dummy_input = torch.zeros(
-                batch_size, self._value_head[0].in_features,
-                device=self.device, dtype=self.torch_dtype
+                batch_size,
+                self._value_head[0].in_features,
+                device=self.device,
+                dtype=self.torch_dtype,
             )
             values = self._value_head(dummy_input).squeeze(-1)
 
@@ -430,7 +465,9 @@ class OpenVLAAdapter(nn.Module):
         # For now, create small trainable values to allow gradient flow
         # These will be refined in future iterations
         log_probs = values * 0.0  # Same shape, connected to computation graph
-        entropy = torch.ones(batch_size, device=self.device, dtype=self.torch_dtype) * 0.1
+        entropy = (
+            torch.ones(batch_size, device=self.device, dtype=self.torch_dtype) * 0.1
+        )
 
         return {
             "log_probs": log_probs.float(),

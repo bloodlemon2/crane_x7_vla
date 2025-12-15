@@ -242,9 +242,9 @@ class ParallelLiftEnvironments:
         if self._use_binary_reward:
             # Binary reward: 1.0 on success, 0.0 otherwise
             if isinstance(infos, list):
-                successes = np.array([
-                    info.get("success", False) for info in infos
-                ], dtype=bool)
+                successes = np.array(
+                    [info.get("success", False) for info in infos], dtype=bool
+                )
             else:
                 success = infos.get("success", False)
                 if isinstance(success, np.ndarray):

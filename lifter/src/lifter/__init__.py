@@ -5,7 +5,7 @@
 __version__ = "0.1.0"
 
 from lifter.clients import JobInfo, SlurmClient, SSHClient
-from lifter.config import Settings, SSHConfig, SlurmConfig, WandbConfig
+from lifter.config import Settings, SlurmConfig, SSHConfig, WandbConfig
 from lifter.job_script import JobScriptBuilder, SlurmDirectives
 
 __all__ = [

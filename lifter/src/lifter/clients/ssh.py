@@ -7,6 +7,7 @@ paramikoを使用してSSH接続とファイル転送を行う。
 
 from __future__ import annotations
 
+import contextlib
 import getpass
 import shlex
 from pathlib import Path
@@ -18,7 +19,7 @@ from lifter.config import SSHConfig
 from lifter.core.console import console
 
 if TYPE_CHECKING:
-    from paramiko.channel import ChannelFile
+    pass
 
 
 class SSHError(Exception):
@@ -73,7 +74,9 @@ class SSHClient:
                 if not expanded_path.exists():
                     raise SSHError(f"秘密鍵ファイルが見つかりません: {expanded_path}")
 
-                console.print(f"[dim]公開鍵認証で接続中: {self.config.user}@{self.config.host}[/dim]")
+                console.print(
+                    f"[dim]公開鍵認証で接続中: {self.config.user}@{self.config.host}[/dim]"
+                )
                 self._client.connect(
                     hostname=self.config.host,
                     port=self.config.port,
@@ -89,7 +92,9 @@ class SSHClient:
                         f"Password for {self.config.user}@{self.config.host}: "
                     )
 
-                console.print(f"[dim]パスワード認証で接続中: {self.config.user}@{self.config.host}[/dim]")
+                console.print(
+                    f"[dim]パスワード認証で接続中: {self.config.user}@{self.config.host}[/dim]"
+                )
                 self._client.connect(
                     hostname=self.config.host,
                     port=self.config.port,
@@ -263,17 +268,13 @@ class SSHClient:
     def close(self) -> None:
         """接続を閉じる."""
         if self._sftp is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._sftp.close()
-            except Exception:  # noqa: BLE001
-                pass
             self._sftp = None
 
         if self._client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._client.close()
-            except Exception:  # noqa: BLE001
-                pass
             self._client = None
 
     def __enter__(self) -> SSHClient:

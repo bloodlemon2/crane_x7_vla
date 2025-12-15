@@ -50,8 +50,16 @@ class PickPlace(GenesisEnvironment):
         # Add cube
         self.cube = self.scene.add_entity(
             gs.morphs.Box(
-                size=(self.cube_half_size * 2, self.cube_half_size * 2, self.cube_half_size * 2),
-                pos=(self.cube_spawn_center[0], self.cube_spawn_center[1], self.cube_half_size),
+                size=(
+                    self.cube_half_size * 2,
+                    self.cube_half_size * 2,
+                    self.cube_half_size * 2,
+                ),
+                pos=(
+                    self.cube_spawn_center[0],
+                    self.cube_spawn_center[1],
+                    self.cube_half_size,
+                ),
             )
         )
 
@@ -153,13 +161,15 @@ class PickPlace(GenesisEnvironment):
         metrics = self._compute_metrics()
         infos = []
         for i in range(self._n_envs):
-            infos.append({
-                "success": bool(metrics["success"][i]),
-                "height_reached": bool(metrics["height_reached"][i]),
-                "is_close": bool(metrics["is_close"][i]),
-                "gripper_to_cube_dist": float(metrics["distance"][i]),
-                "cube_height": float(metrics["cube_height"][i]),
-            })
+            infos.append(
+                {
+                    "success": bool(metrics["success"][i]),
+                    "height_reached": bool(metrics["height_reached"][i]),
+                    "is_close": bool(metrics["is_close"][i]),
+                    "gripper_to_cube_dist": float(metrics["distance"][i]),
+                    "cube_height": float(metrics["cube_height"][i]),
+                }
+            )
         return infos
 
     def _compute_metrics(self) -> dict[str, np.ndarray]:

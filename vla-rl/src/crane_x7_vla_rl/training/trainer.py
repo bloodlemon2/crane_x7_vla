@@ -171,7 +171,9 @@ class VLARLTrainer:
         """
         logger.info("Starting VLA-RL training...")
         logger.info(f"  Total updates: {self.config.num_updates}")
-        logger.info(f"  Rollouts per update: {self.config.rollout.num_rollouts_per_update}")
+        logger.info(
+            f"  Rollouts per update: {self.config.rollout.num_rollouts_per_update}"
+        )
         logger.info(f"  Parallel envs: {self.config.rollout.num_parallel_envs}")
 
         start_time = time.time()

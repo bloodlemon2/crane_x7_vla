@@ -22,18 +22,17 @@ Example:
 
 import argparse
 import gc
-import os
 import shutil
 from pathlib import Path
 
 import torch
 from peft import PeftModel
-from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 
 # Register OpenVLA model to HF Auto Classes
 from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
+from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 
 
 def register_openvla_classes():
@@ -72,13 +71,13 @@ def merge_lora_adapters(
     if not adapter_config_file.exists():
         raise ValueError(f"No adapter_config.json found in {adapter_path}")
 
-    print(f"=" * 60)
-    print(f"LoRA Merge Script")
-    print(f"=" * 60)
+    print("=" * 60)
+    print("LoRA Merge Script")
+    print("=" * 60)
     print(f"Adapter path: {adapter_path}")
     print(f"Base model: {base_model}")
     print(f"Output path: {output_path}")
-    print(f"=" * 60)
+    print("=" * 60)
 
     # Register OpenVLA classes
     print("Registering OpenVLA classes...")
@@ -144,16 +143,14 @@ def merge_lora_adapters(
     gc.collect()
     torch.cuda.empty_cache()
 
-    print(f"=" * 60)
-    print(f"Merge completed successfully!")
+    print("=" * 60)
+    print("Merge completed successfully!")
     print(f"Merged model saved to: {output_path}")
-    print(f"=" * 60)
+    print("=" * 60)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Merge LoRA adapters into base OpenVLA model"
-    )
+    parser = argparse.ArgumentParser(description="Merge LoRA adapters into base OpenVLA model")
     parser.add_argument(
         "--adapter_path",
         type=str,

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
 
 import yaml
 from rich.console import Console
@@ -55,6 +54,7 @@ class WandbSweepClient:
         # wandbをインポート (遅延インポート)
         try:
             import wandb
+
             self._wandb = wandb
         except ImportError as e:
             raise WandbSweepError(

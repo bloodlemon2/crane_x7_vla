@@ -4,7 +4,7 @@
 """Rollout manager for VLA-RL training."""
 
 import logging
-from typing import Any, Callable
+from typing import Callable
 
 import numpy as np
 import torch

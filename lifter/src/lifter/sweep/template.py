@@ -122,9 +122,7 @@ class TemplateProcessor:
         remaining = set(re.findall(r"\{\{(\w+)\}\}", script))
         if remaining:
             if self.strict:
-                raise TemplateError(
-                    f"未展開のプレースホルダがあります: {remaining}"
-                )
+                raise TemplateError(f"未展開のプレースホルダがあります: {remaining}")
             console.print(f"[yellow]警告: 未展開のプレースホルダ: {remaining}[/yellow]")
             console.print("[yellow].envファイルにこれらの変数を定義してください[/yellow]")
 

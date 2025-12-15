@@ -42,7 +42,7 @@ def load_settings_with_error(env_file: Path) -> Settings:
     except FileNotFoundError:
         console.print(f"[red]設定ファイルが見つかりません: {env_file}[/red]")
         console.print("[dim].env.templateをコピーして.envを作成してください[/dim]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 def load_local_settings_with_error(env_file: Path) -> LocalSettings:
@@ -76,7 +76,7 @@ def load_local_settings_with_error(env_file: Path) -> LocalSettings:
 
 def create_clients(
     settings: Settings, password: str | None = None
-) -> tuple["SSHClient", "SlurmClient"]:
+) -> tuple[SSHClient, SlurmClient]:
     """SSH/Slurmクライアントを作成して接続.
 
     Args:

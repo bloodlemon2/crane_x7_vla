@@ -10,10 +10,11 @@ from __future__ import annotations
 import re
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from rich.console import Group
 from rich.live import Live
@@ -418,7 +419,9 @@ class SlurmClient:
 
         return [line for line in stdout.split("\n") if line.strip()]
 
-    def get_log_tail(self, log_path: str, offset: int = 0, max_lines: int = 10) -> tuple[list[str], int]:
+    def get_log_tail(
+        self, log_path: str, offset: int = 0, max_lines: int = 10
+    ) -> tuple[list[str], int]:
         """ログファイルの末尾を取得.
 
         Args:
@@ -533,9 +536,7 @@ class SlurmClient:
                         log_path = self.get_job_output_file(job_id)
 
                 # 完了判定
-                if state is None:
-                    final_state = "COMPLETED"
-                elif state in ("COMPLETED", "CD"):
+                if state is None or state in ("COMPLETED", "CD"):
                     final_state = "COMPLETED"
                 elif state in ("FAILED", "F"):
                     final_state = "FAILED"
@@ -580,12 +581,18 @@ class SlurmClient:
                 if final_state:
                     # 最終状態を表示
                     if final_state == "COMPLETED":
-                        console.print(f"\n[bold green]✓ ジョブ {job_id} が完了しました[/bold green]")
+                        console.print(
+                            f"\n[bold green]✓ ジョブ {job_id} が完了しました[/bold green]"
+                        )
                     elif final_state in ("FAILED", "TIMEOUT", "NODE_FAIL"):
-                        console.print(f"\n[bold red]✗ ジョブ {job_id} が失敗しました ({final_state})[/bold red]")
+                        console.print(
+                            f"\n[bold red]✗ ジョブ {job_id} が失敗しました ({final_state})[/bold red]"
+                        )
                         self._print_error_details(job_id, log_path)
                     elif final_state == "CANCELLED":
-                        console.print(f"\n[bold yellow]! ジョブ {job_id} がキャンセルされました[/bold yellow]")
+                        console.print(
+                            f"\n[bold yellow]! ジョブ {job_id} がキャンセルされました[/bold yellow]"
+                        )
                     return final_state
                 time.sleep(1)
 

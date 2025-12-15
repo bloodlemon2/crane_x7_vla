@@ -414,9 +414,13 @@ Examples:
         agent_backend_parser.add_argument("--project", type=str, required=True, help="W&B project name")
 
         # Data and output arguments
-        agent_backend_parser.add_argument("--data-root", type=str, required=True, help="Path to training data directory")
+        agent_backend_parser.add_argument(
+            "--data-root", type=str, required=True, help="Path to training data directory"
+        )
         agent_backend_parser.add_argument("--output-dir", type=str, default="./outputs", help="Output directory")
-        agent_backend_parser.add_argument("--experiment-name", type=str, default="crane_x7_vla_sweep", help="Experiment name")
+        agent_backend_parser.add_argument(
+            "--experiment-name", type=str, default="crane_x7_vla_sweep", help="Experiment name"
+        )
 
         # Fixed training parameters (not swept)
         agent_backend_parser.add_argument("--max-steps", type=int, help="Maximum training steps (fixed, not swept)")

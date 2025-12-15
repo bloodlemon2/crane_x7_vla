@@ -7,7 +7,7 @@ import mujoco.viewer
 
 model = mujoco.MjModel.from_xml_path("robot.xml")
 
-data  = mujoco.MjData(model)
+data = mujoco.MjData(model)
 
 with mujoco.viewer.launch_passive(model, data) as viewer:
     start = time.time()
@@ -16,4 +16,3 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         step_start = time.time()
         mujoco.mj_step(model, data)
         viewer.sync()
-

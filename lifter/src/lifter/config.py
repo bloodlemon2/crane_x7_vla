@@ -82,7 +82,7 @@ class SlurmConfig(BaseModel):
         parts = v.split(":")
         if len(parts) == 3:
             try:
-                h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+                _h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
                 if 0 <= m < 60 and 0 <= s < 60:
                     return v
             except ValueError:
@@ -277,11 +277,11 @@ def load_env_vars(env_file: Path | str = ".env") -> dict[str, str]:
                 value = value.strip()
 
                 # クォートを除去 (シングルまたはダブル)
-                if len(value) >= 2:
-                    if (value.startswith('"') and value.endswith('"')) or (
-                        value.startswith("'") and value.endswith("'")
-                    ):
-                        value = value[1:-1]
+                if len(value) >= 2 and (
+                    (value.startswith('"') and value.endswith('"'))
+                    or (value.startswith("'") and value.endswith("'"))
+                ):
+                    value = value[1:-1]
 
                 env_vars[key] = value
 

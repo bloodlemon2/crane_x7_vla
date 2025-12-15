@@ -57,7 +57,7 @@ class MonitorDisplayBuilder:
     ジョブ監視のRich表示を構築する。
     """
 
-    def __init__(self, state: MonitorState, job_info: "JobInfo | None" = None):
+    def __init__(self, state: MonitorState, job_info: JobInfo | None = None):
         """ビルダーを初期化.
 
         Args:
@@ -151,10 +151,7 @@ class MonitorDisplayBuilder:
         """
         log_text = Text()
         for i, line in enumerate(lines):
-            if len(line) > max_width:
-                display_line = line[: max_width - 3] + "..."
-            else:
-                display_line = line
+            display_line = line[: max_width - 3] + "..." if len(line) > max_width else line
             log_text.append(display_line)
             if i < len(lines) - 1:
                 log_text.append("\n")

@@ -8,16 +8,18 @@ SSH/Slurmを使わずにローカルでジョブを実行する。
 from __future__ import annotations
 
 import atexit
+import contextlib
 import os
 import signal
 import subprocess
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Group
 from rich.live import Live
@@ -137,7 +139,7 @@ class LocalExecutionBackend:
         console.print(f"[dim]ログファイル: {log_file}[/dim]")
 
         # サブプロセスで実行
-        log_handle = open(log_file, "w")
+        log_handle = open(log_file, "w")  # noqa: SIM115
         process = subprocess.Popen(
             ["bash", str(script_path)],
             stdout=log_handle,
@@ -153,7 +155,9 @@ class LocalExecutionBackend:
             script_path=script_path,
         )
 
-        console.print(f"[green]ローカルジョブが開始されました: {job_id} (PID: {process.pid})[/green]")
+        console.print(
+            f"[green]ローカルジョブが開始されました: {job_id} (PID: {process.pid})[/green]"
+        )
         return job_id
 
     def get_job_state(self, job_id: str) -> str | None:
@@ -190,22 +194,20 @@ class LocalExecutionBackend:
 
         if job.process.poll() is None:
             # プロセスグループ全体を終了
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
-            except ProcessLookupError:
-                pass
             try:
                 job.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(os.getpgid(job.process.pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
             console.print(f"[yellow]ジョブ {job_id} をキャンセルしました[/yellow]")
         else:
             console.print(f"[dim]ジョブ {job_id} は既に終了しています[/dim]")
 
-    def get_log_tail(self, log_path: Path, offset: int = 0, max_lines: int = 10) -> tuple[list[str], int]:
+    def get_log_tail(
+        self, log_path: Path, offset: int = 0, max_lines: int = 10
+    ) -> tuple[list[str], int]:
         """ログファイルの末尾を取得.
 
         Args:
@@ -228,7 +230,7 @@ class LocalExecutionBackend:
             return [], offset
 
         try:
-            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(log_path, encoding="utf-8", errors="replace") as f:
                 if offset > 0:
                     f.seek(offset)
                 content = f.read()
@@ -357,16 +359,22 @@ class LocalExecutionBackend:
                 if final_state:
                     # 最終ログを取得
                     if show_log:
-                        new_lines, _ = self.get_log_tail(job.log_file, monitor.last_log_offset, max_lines=100)
+                        new_lines, _ = self.get_log_tail(
+                            job.log_file, monitor.last_log_offset, max_lines=100
+                        )
                         if new_lines:
                             monitor.add_log_lines(new_lines)
                         live.update(self._build_monitor_display(monitor))
 
                     # 最終状態を表示
                     if final_state == "COMPLETED":
-                        console.print(f"\n[bold green]✓ ジョブ {job_id} が完了しました[/bold green]")
+                        console.print(
+                            f"\n[bold green]✓ ジョブ {job_id} が完了しました[/bold green]"
+                        )
                     else:
-                        console.print(f"\n[bold red]✗ ジョブ {job_id} が失敗しました ({final_state})[/bold red]")
+                        console.print(
+                            f"\n[bold red]✗ ジョブ {job_id} が失敗しました ({final_state})[/bold red]"
+                        )
                         self._print_error_details(job)
                     return final_state
                 time.sleep(1)
@@ -383,7 +391,7 @@ class LocalExecutionBackend:
         # ログファイルの末尾を表示
         if job.log_file.exists():
             try:
-                with open(job.log_file, "r", encoding="utf-8", errors="replace") as f:
+                with open(job.log_file, encoding="utf-8", errors="replace") as f:
                     lines = f.readlines()
                     last_lines = lines[-20:] if len(lines) > 20 else lines
 

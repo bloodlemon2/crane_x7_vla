@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -71,7 +71,7 @@ def _process_template(script_content: str, env_file: Path) -> str:
 @app.callback()
 def main(
     version: Annotated[
-        Optional[bool],
+        bool | None,
         typer.Option(
             "--version",
             "-v",
@@ -114,7 +114,7 @@ def submit(
         ),
     ] = False,
     password: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--password",
             "-p",
@@ -154,7 +154,7 @@ def submit(
 @app.command()
 def status(
     job_id: Annotated[
-        Optional[str],
+        str | None,
         typer.Argument(help="特定のジョブID (省略時は自分の全ジョブ)"),
     ] = None,
     env_file: Annotated[
@@ -174,7 +174,7 @@ def status(
         ),
     ] = False,
     password: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--password",
             "-p",
@@ -213,7 +213,7 @@ def cancel(
         ),
     ] = Path(".env"),
     password: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--password",
             "-p",
@@ -250,7 +250,7 @@ def wait(
         ),
     ] = Path(".env"),
     poll_interval: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "--interval",
             "-i",
@@ -258,7 +258,7 @@ def wait(
         ),
     ] = None,
     timeout: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "--timeout",
             "-t",
@@ -266,7 +266,7 @@ def wait(
         ),
     ] = None,
     password: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--password",
             "-p",
@@ -282,7 +282,7 @@ def wait(
         ),
     ] = False,
     log_interval: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "--log-interval",
             "-l",
@@ -303,8 +303,12 @@ def wait(
     ssh, slurm = create_clients(settings, password)
 
     # 設定からデフォルト値を取得（コマンドライン引数で上書き可能）
-    actual_poll_interval = poll_interval if poll_interval is not None else settings.slurm.poll_interval
-    actual_log_interval = log_interval if log_interval is not None else settings.slurm.log_poll_interval
+    actual_poll_interval = (
+        poll_interval if poll_interval is not None else settings.slurm.poll_interval
+    )
+    actual_log_interval = (
+        log_interval if log_interval is not None else settings.slurm.log_poll_interval
+    )
 
     try:
         final_state = slurm.wait_for_completion(
@@ -330,6 +334,7 @@ def _add_sweep_commands() -> None:
     """Sweepサブコマンドを追加."""
     try:
         from lifter.sweep.cli import sweep_app
+
         app.add_typer(sweep_app, name="sweep")
     except ImportError:
         # Sweep機能が利用できない場合は無視
