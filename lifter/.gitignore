@@ -4,6 +4,9 @@
 # Sweep状態ファイル
 /.sweep_state
 
+# logs
+/logs
+
 # wandb
 /wandb
 
