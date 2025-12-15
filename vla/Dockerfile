@@ -152,6 +152,7 @@ RUN mkdir -p /workspace/vla /workspace/data /workspace/checkpoints /workspace/lo
 
 # Copy application source code
 COPY --chown=root:root src/crane_x7_vla/ /workspace/vla/src/crane_x7_vla/
+COPY --chown=root:root src/openvla/prismatic/ /workspace/vla/src/openvla/prismatic/
 COPY --chown=root:root configs/ /workspace/vla/configs/
 
 # GPU optimization settings and PYTHONPATH
@@ -160,7 +161,7 @@ ENV CUDA_LAUNCH_BLOCKING=0 \
     PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:512" \
     TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
     TF_CPP_MIN_LOG_LEVEL=2 \
-    PYTHONPATH=/workspace/vla/src/crane_x7_vla:/workspace/vla/src
+    PYTHONPATH=/workspace/vla/src/crane_x7_vla:/workspace/vla/src:/workspace/vla/src/openvla
 
 # Create non-root user matching host UID/GID
 ARG USER_ID=1000

@@ -6,12 +6,24 @@ CRANE-X7ロボットアーム用のVision-Language-Action（VLA）モデルを�
 
 このディレクトリでは、以下のVLAバックエンドをサポートしています：
 
-| バックエンド | 説明 | Dockerfile | パラメータ | 推論速度 | 状態 |
-|-------------|------|------------|-----------|---------|------|
-| **OpenVLA** | Prismatic VLMベースの7Bパラメータモデル | `Dockerfile.openvla` | ~7B | ~5Hz | 実装済み |
-| **MiniVLA** | Qwen 2.5 0.5B + VQ Action Chunking | `Dockerfile.minivla` | ~1B | ~12.5Hz | 実装済み |
-| **OpenPI** | Physical Intelligence社のπ₀モデル（JAX版） | `Dockerfile.openpi` | - | - | 未実装 |
-| **OpenPI PyTorch** | π₀モデルのHuggingFace/PyTorch実装 | `Dockerfile.openpi-pytorch` | - | - | 未実装 |
+| バックエンド | 説明 | パラメータ | 推論速度 | 状態 |
+|-------------|------|-----------|---------|------|
+| **OpenVLA** | Prismatic VLMベースの7Bパラメータモデル | ~7B | ~5Hz | 実装済み |
+| **OpenVLA-OFT** | L1 Regression + Action Chunking + FiLM | ~7B | ~8Hz | 実装済み |
+| **MiniVLA** | Qwen 2.5 0.5B + VQ Action Chunking | ~1B | ~12.5Hz | 実装済み |
+| **OpenPI PyTorch** | HuggingFace Pi0 + Flow Matching | - | - | 実装済み |
+
+すべてのバックエンドは統一Dockerfile（`vla/Dockerfile`）に含まれています。
+
+### OpenVLA-OFT（Optimized Fine-Tuning）の特徴
+
+[OpenVLA-OFT](https://arxiv.org/abs/2502.19645)は、標準OpenVLAの改良版です：
+
+- **L1 Regression Action Head**: トークン離散化の代わりに連続アクション予測
+- **Action Chunking**: 複数の将来アクション（デフォルト8ステップ）を一度に予測
+- **FiLM（Feature-wise Linear Modulation）**: 言語-ビジョン統合の改善
+- **Proprioceptive Input**: ロボット状態を入力として使用
+- **Multi-image Support**: 複数カメラ入力に対応
 
 ### MiniVLAの特徴
 
@@ -22,6 +34,15 @@ MiniVLAは軽量で高速な推論を実現するVLAモデルです：
 - **VQ Action Chunking**: 複数の将来アクションを効率的に予測
 - **Multi-image Support**: 画像履歴 + 手首カメラ入力に対応
 
+### OpenPI PyTorchの特徴
+
+Physical Intelligence社のπ₀モデルをPyTorchで実装：
+
+- **Flow Matching**: 拡散モデルベースのアクション生成
+- **50-step Action Chunking**: 長期アクション予測
+- **マルチカメラ入力**: 3カメラ（base, left_wrist, right_wrist）対応
+- **HuggingFace統合**: `lerobot/pi0_base`から初期化
+
 ## クイックスタート
 
 ### 1. Dockerイメージのビルド
@@ -29,11 +50,8 @@ MiniVLAは軽量で高速な推論を実現するVLAモデルです：
 ```bash
 cd /path/to/crane_x7_vla/vla
 
-# OpenVLA用
-docker build -f Dockerfile.openvla -t crane_x7_vla_openvla .
-
-# MiniVLA用（軽量版）
-docker build -f Dockerfile.minivla -t crane_x7_vla_minivla .
+# 統一イメージをビルド（全バックエンド含む）
+docker build -t crane_x7_vla .
 ```
 
 ### 2. トレーニングの実行
@@ -43,25 +61,27 @@ docker build -f Dockerfile.minivla -t crane_x7_vla_minivla .
 docker run --gpus all -it --rm \
   -v $(pwd)/..:/workspace \
   -v ~/.cache:/home/vla/.cache \
-  crane_x7_vla_openvla
+  crane_x7_vla
 
 # コンテナ内でトレーニング実行（OpenVLA）
 python -m crane_x7_vla.training.cli train openvla \
   --data-root /workspace/data/tfrecord_logs \
   --experiment-name crane_x7_openvla
 
-# MiniVLAの場合
-docker run --gpus all -it --rm \
-  -v $(pwd)/..:/workspace \
-  -v ~/.cache/home/vla/.cache \
-  crane_x7_vla_minivla
+# OpenVLA-OFT（Action Chunking + L1 Regression）
+python -m crane_x7_vla.training.cli train openvla-oft \
+  --data-root /workspace/data/tfrecord_logs \
+  --experiment-name crane_x7_openvla_oft
 
-# コンテナ内でトレーニング実行（MiniVLA）
+# MiniVLA（軽量・高速）
 python -m crane_x7_vla.training.cli train minivla \
   --data-root /workspace/data/tfrecord_logs \
-  --experiment-name crane_x7_minivla \
-  --vq-enabled \
-  --multi-image-enabled
+  --experiment-name crane_x7_minivla
+
+# OpenPI PyTorch（Flow Matching）
+python -m crane_x7_vla.training.cli train openpi-pytorch \
+  --data-root /workspace/data/tfrecord_logs \
+  --experiment-name crane_x7_openpi
 ```
 
 ## 環境構築
@@ -74,21 +94,21 @@ python -m crane_x7_vla.training.cli train minivla \
 
 ### Dockerイメージ
 
-各VLAバックエンドは依存関係が異なるため、別々のDockerイメージを使用します：
+統一Dockerfileにすべてのバックエンドの依存関係が含まれています：
 
 ```bash
-# OpenVLA（Python 3.10, PyTorch 2.5.1, ~7Bパラメータ）
-docker build -f Dockerfile.openvla -t crane_x7_vla_openvla .
+# 統一イメージのビルド（推奨）
+docker build -t crane_x7_vla .
 
-# MiniVLA（Python 3.10, PyTorch 2.5.1, ~1Bパラメータ、軽量・高速）
-docker build -f Dockerfile.minivla -t crane_x7_vla_minivla .
-
-# OpenPI JAX版（Python 3.11, JAX）
-docker build -f Dockerfile.openpi -t crane_x7_vla_openpi .
-
-# OpenPI PyTorch版（Python 3.11, PyTorch 2.7.1）
-docker build -f Dockerfile.openpi-pytorch -t crane_x7_vla_openpi_pytorch .
+# 異なるCUDAバージョンでビルド
+docker build --build-arg CUDA_VERSION=12.6.3 --build-arg CUDA_SHORT=cu126 -t crane_x7_vla .
 ```
+
+**環境仕様**:
+- CUDA 12.6.3
+- Python 3.11
+- PyTorch 2.9.1
+- Flash Attention 2.8.3
 
 ### HuggingFaceモデルのダウンロード
 
@@ -100,6 +120,9 @@ huggingface-cli login
 
 # OpenVLAモデルのダウンロード（約14GB）
 huggingface-cli download openvla/openvla-7b
+
+# Pi0モデルのダウンロード
+huggingface-cli download lerobot/pi0_base
 ```
 
 ## データの準備
@@ -131,8 +154,7 @@ data/tfrecord_logs/
 
 ```bash
 # ROS 2環境でデータ収集
-cd ros2/docker
-docker compose --profile teleop up
+docker compose --profile log up
 ```
 
 ## トレーニング
@@ -152,9 +174,18 @@ python -m crane_x7_vla.training.cli train openvla \
 # 設定ファイル + CLI引数でオーバーライド
 python -m crane_x7_vla.training.cli train openvla \
   --config /workspace/vla/configs/openvla_default.yaml \
-  --training-batch-size 32 \
-  --training-learning-rate 1e-4
+  --batch-size 32 \
+  --learning-rate 1e-4
 ```
+
+### 利用可能なバックエンド
+
+| バックエンド名 | 説明 |
+|--------------|------|
+| `openvla` | 標準OpenVLA（トークン化アクション） |
+| `openvla-oft` | OpenVLA-OFT（L1 Regression + Action Chunking） |
+| `minivla` | MiniVLA（軽量 + VQ Action Chunking） |
+| `openpi-pytorch` | OpenPI PyTorch（Flow Matching） |
 
 ### CLI引数一覧
 
@@ -171,55 +202,11 @@ python -m crane_x7_vla.training.cli train openvla \
 
 | 引数 | デフォルト | 説明 |
 |------|-----------|------|
-| `--training-batch-size` | 16 | バッチサイズ |
-| `--training-num-epochs` | 100 | エポック数 |
-| `--training-learning-rate` | 5e-4 | 学習率 |
-| `--training-weight-decay` | 0.01 | Weight decay |
-| `--training-warmup-steps` | 1000 | Warmupステップ数 |
-| `--training-max-grad-norm` | 1.0 | 勾配クリッピング |
-| `--training-mixed-precision` | bf16 | 混合精度（no/fp16/bf16） |
-| `--training-save-interval` | 1000 | チェックポイント保存間隔 |
-
-#### OpenVLA固有設定
-
-| 引数 | デフォルト | 説明 |
-|------|-----------|------|
-| `--model-id` | `openvla/openvla-7b` | HuggingFaceモデルID |
-| `--use-lora` | True | LoRAを使用 |
-| `--lora-rank` | 32 | LoRAランク |
-| `--lora-alpha` | 16 | LoRAアルファ |
-| `--lora-dropout` | 0.05 | LoRAドロップアウト |
-| `--image-aug` | True | 画像拡張を使用 |
-| `--skip-merge-on-save` | True | 保存時にLoRAマージをスキップ |
-
-#### MiniVLA固有設定
-
-| 引数 | デフォルト | 説明 |
-|------|-----------|------|
-| `--llm-model-id` | `Qwen/Qwen2.5-0.5B` | LLMモデルID |
-| `--use-lora` | True | LoRAを使用 |
-| `--lora-rank` | 16 | LoRAランク |
-| `--lora-alpha` | 8 | LoRAアルファ |
-| `--use-flash-attention` | True | Flash Attentionを使用 |
-| `--image-aug` | True | 画像拡張を使用 |
-
-#### VQ Action Chunking設定（MiniVLA）
-
-| 引数 | デフォルト | 説明 |
-|------|-----------|------|
-| `--vq-enabled` | True | VQ Action Chunkingを有効化 |
-| `--vq-action-horizon` | 8 | アクションチャンク長 |
-| `--vq-n-embed` | 256 | コードブックサイズ |
-| `--vq-n-latent` | 512 | 潜在次元 |
-| `--vq-n-groups` | 7 | Residual VQグループ数 |
-
-#### Multi-image設定（MiniVLA）
-
-| 引数 | デフォルト | 説明 |
-|------|-----------|------|
-| `--multi-image-enabled` | True | マルチ画像入力を有効化 |
-| `--multi-image-image-history` | 2 | 履歴フレーム数 |
-| `--multi-image-use-wrist-camera` | True | 手首カメラを使用 |
+| `--batch-size` | 16 | バッチサイズ |
+| `--learning-rate` | 5e-4 | 学習率 |
+| `--num-epochs` | 100 | エポック数 |
+| `--max-steps` | - | 最大ステップ数 |
+| `--grad-accumulation-steps` | 1 | 勾配累積ステップ |
 
 ### 設定ファイルの生成
 
@@ -231,12 +218,20 @@ python -m crane_x7_vla.training.cli config \
   --data-root /workspace/data/tfrecord_logs \
   --experiment-name my_experiment
 
-# MiniVLAデフォルト設定ファイルを生成
+# OpenVLA-OFT設定
+python -m crane_x7_vla.training.cli config \
+  --backend openvla-oft \
+  --output openvla_oft_config.yaml
+
+# MiniVLA設定
 python -m crane_x7_vla.training.cli config \
   --backend minivla \
-  --output minivla_config.yaml \
-  --data-root /workspace/data/tfrecord_logs \
-  --experiment-name my_experiment
+  --output minivla_config.yaml
+
+# OpenPI PyTorch設定
+python -m crane_x7_vla.training.cli config \
+  --backend openpi-pytorch \
+  --output openpi_config.yaml
 ```
 
 ### マルチGPUトレーニング
@@ -250,8 +245,78 @@ torchrun --nproc_per_node=2 -m crane_x7_vla.training.cli train openvla \
 # 4GPU並列
 torchrun --nproc_per_node=4 -m crane_x7_vla.training.cli train openvla \
   --data-root /workspace/data/tfrecord_logs \
-  --training-batch-size 8  # GPUあたりのバッチサイズ
+  --batch-size 8  # GPUあたりのバッチサイズ
 ```
+
+## バックエンド固有設定
+
+### OpenVLA固有設定
+
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `model_id` | `openvla/openvla-7b` | HuggingFaceモデルID |
+| `use_lora` | True | LoRAを使用 |
+| `lora_rank` | 32 | LoRAランク |
+| `lora_alpha` | 16 | LoRAアルファ |
+| `lora_dropout` | 0.05 | LoRAドロップアウト |
+| `action_tokenization_bins` | 256 | アクション離散化ビン数 |
+| `image_aug` | True | 画像拡張を使用 |
+| `skip_merge_on_save` | True | 保存時にLoRAマージをスキップ |
+
+### OpenVLA-OFT固有設定
+
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `action_horizon` | 8 | アクションチャンク長 |
+| `film.enabled` | True | FiLMを有効化 |
+| `proprio.enabled` | True | プロプリオセプティブ入力を有効化 |
+| `multi_image.enabled` | True | マルチ画像入力を有効化 |
+| `multi_image.num_images` | 2 | 画像数（primary + wrist） |
+| `action_head.hidden_dim` | 4096 | Action Head隠れ層次元 |
+| `action_head.num_blocks` | 2 | MLPResNetブロック数 |
+
+### MiniVLA固有設定
+
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `llm_model_id` | `Qwen/Qwen2.5-0.5B` | LLMモデルID |
+| `vision_backbone` | `dinosiglip-vit-so-224px` | ビジョンバックボーン |
+| `use_lora` | True | LoRAを使用 |
+| `lora_rank` | 16 | LoRAランク |
+| `use_flash_attention` | True | Flash Attentionを使用 |
+
+#### VQ Action Chunking設定（MiniVLA）
+
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `vq.enabled` | True | VQ Action Chunkingを有効化 |
+| `vq.action_horizon` | 8 | アクションチャンク長 |
+| `vq.n_embed` | 256 | コードブックサイズ |
+| `vq.n_latent` | 512 | 潜在次元 |
+| `vq.n_groups` | 7 | Residual VQグループ数 |
+
+#### Multi-image設定（MiniVLA）
+
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `multi_image.enabled` | True | マルチ画像入力を有効化 |
+| `multi_image.image_history` | 2 | 履歴フレーム数 |
+| `multi_image.use_wrist_camera` | True | 手首カメラを使用 |
+
+### OpenPI PyTorch固有設定
+
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `model_name` | `lerobot/pi0_base` | HuggingFaceモデルID |
+| `action_dim` | 32 | アクション次元（Pi0は32） |
+| `state_dim` | 32 | 状態次元 |
+| `action_horizon` | 50 | アクションチャンク長 |
+| `num_denoise_steps` | 10 | デノイズステップ数 |
+| `noise_scheduler` | `linear` | ノイズスケジューラ |
+| `normalize_actions` | True | アクション正規化 |
+| `normalization_mode` | `quantile` | 正規化モード |
+| `num_cameras` | 3 | カメラ数 |
+| `use_lora` | False | LoRA（現在未サポート） |
 
 ## LoRAアダプターのマージ
 
@@ -266,7 +331,7 @@ torchrun --nproc_per_node=4 -m crane_x7_vla.training.cli train openvla \
 docker run --gpus all --rm \
   -v /path/to/vla/outputs:/workspace/outputs \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
-  noppdev/vla python -m crane_x7_vla.scripts.merge_lora \
+  crane_x7_vla python -m crane_x7_vla.scripts.merge_lora \
   --adapter_path /workspace/outputs/my_experiment/checkpoint-7000/lora_adapters \
   --output_path /workspace/outputs/my_experiment_merged \
   --base_model openvla/openvla-7b
@@ -337,22 +402,6 @@ parameters:
     max: 0.2
 ```
 
-### Sweepエージェントの実行
-
-```bash
-# 単一エージェント
-python -m crane_x7_vla.training.cli agent openvla \
-  --sweep-id abc123xyz \
-  --data-root /workspace/data/tfrecord_logs \
-  --project crane_x7
-
-# 複数回実行
-python -m crane_x7_vla.training.cli agent openvla \
-  --sweep-id abc123xyz \
-  --data-root /workspace/data/tfrecord_logs \
-  --count 10
-```
-
 ### Slurmクラスターでの実行
 
 ```bash
@@ -390,39 +439,56 @@ VLA_MODEL_PATH=/workspace/vla/outputs/my_experiment_merged
 
 ```
 vla/
-├── Dockerfile.openvla          # OpenVLA用Dockerfile
-├── Dockerfile.minivla          # MiniVLA用Dockerfile
-├── Dockerfile.openpi           # OpenPI JAX版用Dockerfile
-├── Dockerfile.openpi-pytorch   # OpenPI PyTorch版用Dockerfile
-├── requirements-openvla.txt    # OpenVLA依存関係
-├── requirements-minivla.txt    # MiniVLA依存関係
-├── requirements-openpi.txt     # OpenPI依存関係
+├── Dockerfile                     # 統一Dockerfile（全バックエンド含む）
+├── requirements-base.txt          # 共通依存関係
+├── requirements-openvla.txt       # OpenVLA依存関係
+├── requirements-minivla.txt       # MiniVLA依存関係
+├── requirements-openpi-pytorch.txt # OpenPI PyTorch依存関係
 ├── configs/
-│   ├── openvla_default.yaml    # OpenVLAデフォルト設定
-│   ├── minivla_default.yaml    # MiniVLAデフォルト設定
-│   └── openpi_default.yaml     # OpenPIデフォルト設定
-├── outputs/                    # 学習出力（チェックポイント）
+│   ├── openvla_default.yaml       # OpenVLAデフォルト設定
+│   ├── minivla_default.yaml       # MiniVLAデフォルト設定
+│   └── openpi_default.yaml        # OpenPIデフォルト設定
+├── outputs/                       # 学習出力（チェックポイント）
 ├── src/
-│   ├── crane_x7_vla/           # 統一トレーニングフレームワーク
+│   ├── crane_x7_vla/              # 統一トレーニングフレームワーク
 │   │   ├── training/
-│   │   │   ├── cli.py          # コマンドラインインターフェース
-│   │   │   └── trainer.py      # 統一トレーナー
-│   │   ├── backends/           # バックエンド実装
-│   │   │   ├── openvla.py      # OpenVLAバックエンド
-│   │   │   ├── minivla.py      # MiniVLAバックエンド
-│   │   │   └── openpi.py       # OpenPIバックエンド
-│   │   ├── action_tokenizer/   # アクショントークナイザー
-│   │   │   ├── vq.py           # Residual VQ実装
-│   │   │   └── vq_tokenizer.py # VQアクショントークナイザー
-│   │   ├── config/             # 設定データクラス
-│   │   ├── data/               # データローダー
-│   │   │   └── minivla_dataset.py  # MiniVLAマルチ画像データセット
-│   │   ├── scripts/            # ユーティリティスクリプト
-│   │   │   └── merge_lora.py   # LoRAマージスクリプト
-│   │   └── transforms/         # データ変換
-│   ├── openvla/                # OpenVLAサブモジュール
-│   └── openpi/                 # OpenPIサブモジュール
-└── README.md                   # このファイル
+│   │   │   ├── cli.py             # コマンドラインインターフェース
+│   │   │   └── trainer.py         # 統一トレーナー
+│   │   ├── backends/              # バックエンド実装（サブパッケージ）
+│   │   │   ├── __init__.py        # バックエンド登録
+│   │   │   ├── openvla/           # OpenVLAバックエンド
+│   │   │   │   ├── backend.py
+│   │   │   │   ├── config.py
+│   │   │   │   └── dataset.py
+│   │   │   ├── openvla_oft/       # OpenVLA-OFTバックエンド
+│   │   │   │   ├── backend.py
+│   │   │   │   ├── config.py
+│   │   │   │   ├── components.py  # FiLM, ActionHead等
+│   │   │   │   └── dataset.py
+│   │   │   ├── minivla/           # MiniVLAバックエンド
+│   │   │   │   ├── backend.py
+│   │   │   │   ├── config.py
+│   │   │   │   ├── dataset.py
+│   │   │   │   └── action_tokenizer/
+│   │   │   │       ├── vq.py              # Residual VQ実装
+│   │   │   │       └── vq_tokenizer.py    # VQアクショントークナイザー
+│   │   │   └── openpi_pytorch/    # OpenPI PyTorchバックエンド
+│   │   │       ├── backend.py
+│   │   │       ├── config.py
+│   │   │       └── dataset.py
+│   │   ├── core/                  # 共有コンポーネント
+│   │   │   ├── base.py            # VLABackend基底クラス
+│   │   │   ├── config/            # 設定データクラス
+│   │   │   ├── data/              # データ変換・検証
+│   │   │   ├── transforms/        # 画像・アクション変換
+│   │   │   └── utils/             # ユーティリティ
+│   │   ├── scripts/               # ユーティリティスクリプト
+│   │   │   ├── merge_lora.py      # LoRAマージスクリプト
+│   │   │   └── compute_crane_x7_norm_stats.py
+│   │   └── policies/              # 推論用ポリシー
+│   ├── openvla/                   # OpenVLAサブモジュール
+│   └── openpi/                    # OpenPIサブモジュール
+└── README.md
 ```
 
 ## トラブルシューティング
@@ -443,16 +509,15 @@ VLA_MODEL_PATH=/workspace/vla/outputs/.../checkpoint-7000/lora_adapters
 ```bash
 # バッチサイズを小さくする
 python -m crane_x7_vla.training.cli train openvla \
-  --training-batch-size 8
+  --batch-size 8
 
-# 勾配チェックポインティングを有効化
-python -m crane_x7_vla.training.cli train openvla \
-  --training-gradient-checkpointing
+# 勾配チェックポインティングを有効化（設定ファイルで）
+# training.gradient_checkpointing: true
 ```
 
 ### NCCL タイムアウト（マルチGPU）
 
-`--skip-merge-on-save`はデフォルトで有効です。これにより、チェックポイント保存時のLoRAマージをスキップし、NCCLタイムアウトを回避します。
+`skip_merge_on_save`はデフォルトで有効です。これにより、チェックポイント保存時のLoRAマージをスキップし、NCCLタイムアウトを回避します。
 
 ### TensorFlowの警告
 
@@ -465,9 +530,11 @@ export TF_CPP_MIN_LOG_LEVEL=2
 ## 参考リンク
 
 - [OpenVLA](https://github.com/openvla/openvla) - Prismatic VLMベースのVLAモデル
+- [OpenVLA-OFT](https://arxiv.org/abs/2502.19645) - Optimized Fine-Tuning論文
 - [MiniVLA Blog](https://ai.stanford.edu/blog/minivla/) - Stanford SAILによるMiniVLA紹介
 - [OpenPI](https://github.com/Physical-Intelligence/openpi) - Physical Intelligence社のπ₀モデル
 - [HuggingFace OpenVLA](https://huggingface.co/openvla/openvla-7b) - 事前学習済みモデル
+- [HuggingFace Pi0](https://huggingface.co/lerobot/pi0_base) - Pi0事前学習済みモデル
 - [HuggingFace Qwen2.5](https://huggingface.co/Qwen/Qwen2.5-0.5B) - MiniVLAベースモデル
 - [VQ-BeT](https://arxiv.org/abs/2403.03181) - VQ Action Chunkingの参考論文
 

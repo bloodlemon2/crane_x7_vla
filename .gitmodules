@@ -6,10 +6,13 @@
 	path = ros2/src/crane_x7_description
 	url = https://github.com/rt-net/crane_x7_description.git
 	branch = humble
-[submodule "openvla"]
+[submodule "vla/src/openvla"]
 	path = vla/src/openvla
 	url = https://github.com/NOPLAB/openvla
 	branch = main
+[submodule "vla/src/openvla-oft"]
+	path = vla/src/openvla-oft
+	url = https://github.com/moojink/openvla-oft
 [submodule "vla/src/openpi"]
 	path = vla/src/openpi
 	url = https://github.com/Physical-Intelligence/openpi
