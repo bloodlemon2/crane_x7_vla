@@ -7,6 +7,7 @@ typerを使用したコマンドラインインターフェース。
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -14,6 +15,7 @@ import typer
 
 from slurm_submit import __version__
 from slurm_submit.clients import SlurmError
+from slurm_submit.config import load_env_vars
 from slurm_submit.core import console, create_clients, load_settings_with_error
 
 app = typer.Typer(
@@ -29,6 +31,41 @@ def version_callback(value: bool) -> None:
     if value:
         console.print(f"slurm-submit version {__version__}")
         raise typer.Exit()
+
+
+def _process_template(script_content: str, env_file: Path) -> str:
+    """テンプレート内のプレースホルダを環境変数で置換.
+
+    Args:
+        script_content: スクリプト内容
+        env_file: 環境変数ファイルパス
+
+    Returns:
+        置換後のスクリプト内容
+    """
+    # プレースホルダをチェック
+    placeholders = set(re.findall(r"\{\{(\w+)\}\}", script_content))
+    if not placeholders:
+        return script_content
+
+    console.print(f"[dim]テンプレート内のプレースホルダ: {placeholders}[/dim]")
+
+    # 環境変数を読み込む
+    env_vars = load_env_vars(env_file)
+    console.print(f"[dim].envから {len(env_vars)} 個の変数を読み込みました[/dim]")
+
+    # プレースホルダを置換
+    result = script_content
+    for key, value in env_vars.items():
+        result = result.replace(f"{{{{{key}}}}}", value)
+
+    # 未置換のプレースホルダをチェック
+    remaining = set(re.findall(r"\{\{(\w+)\}\}", result))
+    if remaining:
+        console.print(f"[yellow]警告: 未置換のプレースホルダ: {remaining}[/yellow]")
+        console.print("[yellow].envファイルにこれらの変数を定義してください[/yellow]")
+
+    return result
 
 
 @app.callback()
@@ -89,11 +126,15 @@ def submit(
     """ジョブスクリプトをSlurmクラスターに投下."""
     settings = load_settings_with_error(env_file)
 
+    # スクリプト内容を読み込み、テンプレート変数を置換
+    script_content = script.read_text()
+    processed_content = _process_template(script_content, env_file)
+
     if dry_run:
         console.print("[yellow]ドライランモード: 実際には投下しません[/yellow]")
         console.print(f"\n[bold]スクリプト: {script}[/bold]")
         console.print("-" * 40)
-        console.print(script.read_text())
+        console.print(processed_content)
         console.print("-" * 40)
         console.print(f"\n[dim]接続先: {settings.ssh.user}@{settings.ssh.host}[/dim]")
         console.print(f"[dim]リモートワークディレクトリ: {settings.slurm.remote_workdir}[/dim]")
@@ -101,7 +142,7 @@ def submit(
 
     ssh, slurm = create_clients(settings, password)
     try:
-        job_id = slurm.submit(script)
+        job_id = slurm.submit_script_content(processed_content, script.name)
         console.print(f"\n[bold green]ジョブID: {job_id}[/bold green]")
     except SlurmError as e:
         console.print(f"[red]ジョブ投下に失敗しました: {e}[/red]")

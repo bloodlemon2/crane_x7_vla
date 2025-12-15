@@ -344,6 +344,80 @@ class SlurmClient:
 
         return None
 
+    def get_job_error_file(self, job_id: str) -> str | None:
+        """ジョブの標準エラー出力ファイルパスを取得.
+
+        Args:
+            job_id: ジョブID
+
+        Returns:
+            標準エラー出力ファイルのパス、見つからない場合はNone
+        """
+        # scontrolでジョブ情報を取得
+        cmd = f"scontrol show job {job_id} 2>/dev/null | grep StdErr"
+        stdout, stderr, exit_code = self.ssh.execute(cmd)
+
+        if exit_code == 0 and stdout.strip():
+            # StdErr=/path/to/file の形式
+            match = re.search(r"StdErr=(\S+)", stdout)
+            if match:
+                return match.group(1)
+
+        return None
+
+    def get_job_error_info(self, job_id: str) -> dict | None:
+        """ジョブのエラー情報を取得.
+
+        Args:
+            job_id: ジョブID
+
+        Returns:
+            エラー情報の辞書、見つからない場合はNone
+            - state: ジョブの状態
+            - exit_code: 終了コード
+            - nodelist: 実行ノード
+        """
+        # sacctでExitCode、State、NodeListを取得
+        cmd = f"sacct -j {job_id} --format=JobID,State,ExitCode,NodeList --noheader --parsable2"
+        stdout, stderr, exit_code = self.ssh.execute(cmd)
+
+        if exit_code != 0 or not stdout.strip():
+            return None
+
+        # 最初の行（メインジョブ）をパース
+        lines = stdout.strip().split("\n")
+        if not lines:
+            return None
+
+        parts = lines[0].split("|")
+        if len(parts) >= 3:
+            return {
+                "job_id": parts[0],
+                "state": parts[1],
+                "exit_code": parts[2],
+                "nodelist": parts[3] if len(parts) > 3 else "",
+            }
+
+        return None
+
+    def get_file_tail(self, file_path: str, max_lines: int = 20) -> list[str]:
+        """ファイルの末尾を取得.
+
+        Args:
+            file_path: ファイルパス
+            max_lines: 取得する最大行数
+
+        Returns:
+            ファイルの末尾の行リスト
+        """
+        cmd = f"tail -n {max_lines} {file_path} 2>/dev/null"
+        stdout, _, exit_code = self.ssh.execute(cmd)
+
+        if exit_code != 0:
+            return []
+
+        return [line for line in stdout.split("\n") if line.strip()]
+
     def get_log_tail(self, log_path: str, offset: int = 0, max_lines: int = 10) -> tuple[list[str], int]:
         """ログファイルの末尾を取得.
 
@@ -509,10 +583,47 @@ class SlurmClient:
                         console.print(f"\n[bold green]✓ ジョブ {job_id} が完了しました[/bold green]")
                     elif final_state in ("FAILED", "TIMEOUT", "NODE_FAIL"):
                         console.print(f"\n[bold red]✗ ジョブ {job_id} が失敗しました ({final_state})[/bold red]")
+                        self._print_error_details(job_id, log_path)
                     elif final_state == "CANCELLED":
                         console.print(f"\n[bold yellow]! ジョブ {job_id} がキャンセルされました[/bold yellow]")
                     return final_state
                 time.sleep(1)
+
+    def _print_error_details(self, job_id: str, log_path: str | None) -> None:
+        """ジョブ失敗時のエラー詳細を表示.
+
+        Args:
+            job_id: ジョブID
+            log_path: ログファイルのパス（Noneの場合は取得を試みる）
+        """
+        # エラー情報を取得
+        error_info = self.get_job_error_info(job_id)
+        if error_info:
+            exit_code = error_info.get("exit_code", "N/A")
+            nodelist = error_info.get("nodelist", "")
+            console.print(f"[red]  ExitCode: {exit_code}[/red]")
+            if nodelist:
+                console.print(f"[red]  Node: {nodelist}[/red]")
+
+        # ログファイルパスを取得（未取得の場合）
+        stdout_path = log_path or self.get_job_output_file(job_id)
+        stderr_path = self.get_job_error_file(job_id)
+
+        # stderrの内容を表示（stdoutと異なる場合のみ）
+        if stderr_path and stderr_path != stdout_path:
+            stderr_lines = self.get_file_tail(stderr_path, max_lines=20)
+            if stderr_lines:
+                console.print("\n[bold red]--- stderr ---[/bold red]")
+                for line in stderr_lines:
+                    console.print(f"[red]{line}[/red]")
+
+        # stdoutの最後の部分を表示
+        if stdout_path:
+            stdout_lines = self.get_file_tail(stdout_path, max_lines=20)
+            if stdout_lines:
+                console.print("\n[bold yellow]--- stdout (last 20 lines) ---[/bold yellow]")
+                for line in stdout_lines:
+                    console.print(f"[dim]{line}[/dim]")
 
     def print_status_table(self, jobs: list[JobInfo]) -> None:
         """ジョブ状態をテーブル形式で表示.

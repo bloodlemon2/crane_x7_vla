@@ -130,6 +130,15 @@ python -m crane_x7_vla.training.cli config --backend minivla --output minivla_co
 python -m crane_x7_vla.training.cli config --backend pi0 --output pi0_config.yaml
 python -m crane_x7_vla.training.cli config --backend pi0.5 --output pi05_config.yaml
 
+# W&B Sweepエージェント（ハイパーパラメータチューニング）
+python -m crane_x7_vla.training.cli agent pi0.5 \
+  --sweep-id <SWEEP_ID> \
+  --entity <WANDB_ENTITY> \
+  --project <WANDB_PROJECT> \
+  --data-root /workspace/data/tfrecord_logs \
+  --output-dir /workspace/outputs/checkpoints \
+  --max-steps 10000
+
 # LoRAマージ
 python -m crane_x7_vla.scripts.merge_lora \
   --adapter_path /workspace/outputs/crane_x7_openvla/lora_adapters \

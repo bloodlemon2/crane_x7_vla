@@ -218,6 +218,90 @@ def config_command(args: argparse.Namespace) -> None:
     logging.info("Edit this file to customize your training configuration.")
 
 
+def agent_command(args: argparse.Namespace) -> None:
+    """Execute W&B Sweep agent command."""
+    import wandb
+
+    backend = args.backend
+
+    def run_sweep_training():
+        """Training function called by wandb.agent()."""
+        # Initialize W&B run (agent will set the config)
+        run = wandb.init()
+
+        # Get sweep parameters from W&B config
+        sweep_config = dict(wandb.config)
+        logging.info(f"Sweep parameters: {sweep_config}")
+
+        # Create base configuration
+        config = create_default_config(
+            backend=backend,
+            data_root=Path(args.data_root),
+            output_dir=Path(args.output_dir),
+            experiment_name=args.experiment_name,
+        )
+
+        # Apply sweep parameters to config
+        # Training parameters
+        if "learning_rate" in sweep_config:
+            config.training.learning_rate = sweep_config["learning_rate"]
+        if "batch_size" in sweep_config:
+            config.training.batch_size = sweep_config["batch_size"]
+        if "grad_accumulation_steps" in sweep_config:
+            config.training.grad_accumulation_steps = sweep_config["grad_accumulation_steps"]
+        if "weight_decay" in sweep_config:
+            config.training.weight_decay = sweep_config["weight_decay"]
+        if "warmup_ratio" in sweep_config:
+            config.training.warmup_ratio = sweep_config["warmup_ratio"]
+
+        # Apply max_steps from CLI (fixed parameter)
+        if args.max_steps is not None:
+            config.training.max_steps = args.max_steps
+
+        # Backend-specific parameters
+        if backend in ("pi0", "pi0.5") and hasattr(config, "pi0"):
+            if "lora_rank" in sweep_config:
+                config.pi0.lora_rank = sweep_config["lora_rank"]
+            if "action_horizon" in sweep_config:
+                config.pi0.action_horizon = sweep_config["action_horizon"]
+            if "num_flow_steps" in sweep_config:
+                config.pi0.num_flow_steps = sweep_config["num_flow_steps"]
+        elif backend == "openvla" and hasattr(config, "openvla"):
+            if "lora_rank" in sweep_config:
+                config.openvla.lora_rank = sweep_config["lora_rank"]
+        elif backend == "minivla" and hasattr(config, "minivla"):
+            if "lora_rank" in sweep_config:
+                config.minivla.lora_rank = sweep_config["lora_rank"]
+        elif backend == "openvla-oft" and hasattr(config, "openvla_oft"):
+            if "lora_rank" in sweep_config:
+                config.openvla_oft.lora_rank = sweep_config["lora_rank"]
+
+        # Save configuration
+        config_save_path = Path(config.output_dir) / f"config_{run.id}.yaml"
+        config_save_path.parent.mkdir(parents=True, exist_ok=True)
+        config.to_yaml(config_save_path)
+        logging.info(f"Configuration saved to {config_save_path}")
+
+        # Lazy import trainer
+        from crane_x7_vla.training.trainer import VLATrainer
+
+        # Create trainer and start training
+        trainer = VLATrainer(config)
+        results = trainer.train()
+
+        logging.info(f"Training completed: {results}")
+
+        # Finish W&B run
+        wandb.finish()
+
+    # Build sweep path
+    sweep_path = f"{args.entity}/{args.project}/{args.sweep_id}"
+    logging.info(f"Starting W&B Sweep agent for: {sweep_path}")
+
+    # Run the agent (count=1 for single run per Slurm job)
+    wandb.agent(sweep_path, function=run_sweep_training, count=1)
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -242,6 +326,9 @@ Examples:
 
   # Evaluate trained model
   python -m crane_x7_vla.training.cli evaluate --config my_config.yaml --checkpoint ./outputs/checkpoint
+
+  # Run W&B Sweep agent
+  python -m crane_x7_vla.training.cli agent pi0.5 --sweep-id abc123 --entity myteam --project myproject --data-root ./data
         """,
     )
 
@@ -305,6 +392,35 @@ Examples:
     config_parser.add_argument("--output-dir", type=str, help="Output directory for checkpoints and logs")
     config_parser.add_argument("--experiment-name", type=str, default="crane_x7_vla", help="Experiment name")
 
+    # =====================
+    # Agent command (W&B Sweep)
+    # =====================
+    agent_parser = subparsers.add_parser(
+        "agent",
+        help="Run W&B Sweep agent for hyperparameter tuning",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    agent_subparsers = agent_parser.add_subparsers(dest="backend", help="VLA backend to use")
+
+    for backend in backends:
+        agent_backend_parser = agent_subparsers.add_parser(
+            backend,
+            help=f"Run sweep agent with {backend} backend",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        # W&B Sweep arguments
+        agent_backend_parser.add_argument("--sweep-id", type=str, required=True, help="W&B Sweep ID")
+        agent_backend_parser.add_argument("--entity", type=str, required=True, help="W&B entity (username or team)")
+        agent_backend_parser.add_argument("--project", type=str, required=True, help="W&B project name")
+
+        # Data and output arguments
+        agent_backend_parser.add_argument("--data-root", type=str, required=True, help="Path to training data directory")
+        agent_backend_parser.add_argument("--output-dir", type=str, default="./outputs", help="Output directory")
+        agent_backend_parser.add_argument("--experiment-name", type=str, default="crane_x7_vla_sweep", help="Experiment name")
+
+        # Fixed training parameters (not swept)
+        agent_backend_parser.add_argument("--max-steps", type=int, help="Maximum training steps (fixed, not swept)")
+
     args = parser.parse_args()
 
     # Setup logging
@@ -320,6 +436,11 @@ Examples:
         evaluate_command(args)
     elif args.command == "config":
         config_command(args)
+    elif args.command == "agent":
+        if args.backend is None:
+            agent_parser.print_help()
+            sys.exit(1)
+        agent_command(args)
     else:
         parser.print_help()
         sys.exit(1)
