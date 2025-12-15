@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING
 import typer
 from pydantic import ValidationError
 
-from slurm_submit.config import LocalSettings, Settings, load_local_settings, load_settings
-from slurm_submit.core.console import console
+from lifter.config import LocalSettings, Settings, load_local_settings, load_settings
+from lifter.core.console import console
 
 if TYPE_CHECKING:
-    from slurm_submit.clients import SlurmClient, SSHClient
+    from lifter.clients import SlurmClient, SSHClient
 
 
 def load_settings_with_error(env_file: Path) -> Settings:
@@ -89,7 +89,7 @@ def create_clients(
     Raises:
         typer.Exit: SSH接続に失敗した場合
     """
-    from slurm_submit.clients import SlurmClient, SSHClient, SSHError
+    from lifter.clients import SlurmClient, SSHClient, SSHError
 
     ssh = SSHClient(settings.ssh)
     try:

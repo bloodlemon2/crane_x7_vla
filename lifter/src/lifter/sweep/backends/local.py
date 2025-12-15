@@ -24,7 +24,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
-from slurm_submit.core.console import console
+from lifter.core.console import console
 
 if TYPE_CHECKING:
     pass

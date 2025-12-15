@@ -17,7 +17,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 if TYPE_CHECKING:
-    from slurm_submit.clients.slurm import JobInfo
+    from lifter.clients.slurm import JobInfo
 
 
 def get_terminal_log_lines() -> int:

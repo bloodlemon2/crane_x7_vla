@@ -2,8 +2,8 @@
 # Copyright 2025 nop
 """W&B Sweep統合モジュール."""
 
-from slurm_submit.sweep.engine import SweepEngine
-from slurm_submit.sweep.template import (
+from lifter.sweep.engine import SweepEngine
+from lifter.sweep.template import (
     JobGenerator,
     TemplateContext,
     TemplateError,
@@ -11,7 +11,7 @@ from slurm_submit.sweep.template import (
     create_custom_job_generator,
     create_template_job_generator,
 )
-from slurm_submit.sweep.wandb_client import WandbSweepClient
+from lifter.sweep.wandb_client import WandbSweepClient
 
 __all__ = [
     "SweepEngine",

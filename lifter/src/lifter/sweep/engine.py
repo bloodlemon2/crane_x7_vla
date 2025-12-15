@@ -18,13 +18,13 @@ from typing import TYPE_CHECKING, Any
 
 from rich.panel import Panel
 
-from slurm_submit.clients import SlurmClient, SlurmError
-from slurm_submit.config import Settings
-from slurm_submit.core.console import console
-from slurm_submit.job_script import JobScriptBuilder, SlurmDirectives
-from slurm_submit.sweep.template import JobGenerator
-from slurm_submit.sweep.wandb_client import WandbSweepClient
-from slurm_submit.utils import generate_timestamp
+from lifter.clients import SlurmClient, SlurmError
+from lifter.config import Settings
+from lifter.core.console import console
+from lifter.job_script import JobScriptBuilder, SlurmDirectives
+from lifter.sweep.template import JobGenerator
+from lifter.sweep.wandb_client import WandbSweepClient
+from lifter.utils import generate_timestamp
 
 
 class SweepEngine:
@@ -697,9 +697,9 @@ python -m crane_x7_vla.training.cli agent openvla \\
 
 # 型ヒント用のインポート（循環インポート回避）
 if TYPE_CHECKING:
-    from slurm_submit.config import LocalSettings
-    from slurm_submit.sweep.backends.local import LocalExecutionBackend
+    from lifter.config import LocalSettings
+    from lifter.sweep.backends.local import LocalExecutionBackend
 
 
 # 後方互換性のためのエイリアス
-from slurm_submit.sweep.template import create_custom_job_generator  # noqa: E402, F401
+from lifter.sweep.template import create_custom_job_generator  # noqa: E402, F401

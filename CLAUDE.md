@@ -174,17 +174,28 @@ python -m crane_x7_vla_rl.training.cli evaluate \
 python -m crane_x7_vla_rl.training.cli config --output my_config.yaml
 ```
 
-### Slurmクラスター
+### Slurmクラスター (lifter)
 
 ```bash
-cd slurm
+cd lifter
 pip install -e .
 
 # ジョブ投下
-slurm-submit submit jobs/train.sh
+lifter submit jobs/train.sh
 
-# W&B Sweep
-slurm-submit sweep start examples/sweeps/sweep_openvla.yaml --max-runs 10
+# W&B Sweep（リモートSlurmクラスター）
+lifter sweep start examples/sweeps/sweep_openvla.yaml --max-runs 10
+
+# W&B Sweep（ローカル実行）
+lifter sweep start examples/sweeps/sweep_openvla.yaml \
+  --local \
+  --template examples/templates_local/openvla_sweep.sh \
+  --max-runs 5
+
+# ローカルSweep再開
+lifter sweep resume <SWEEP_ID> \
+  --local \
+  --template examples/templates_local/openvla_sweep.sh
 ```
 
 ### LeRobot統合
@@ -271,8 +282,8 @@ crane_x7_vla/
 │   ├── lerobot_robot_crane_x7/    # Robotプラグイン
 │   ├── lerobot_teleoperator_crane_x7/  # Teleoperatorプラグイン
 │   └── configs/                   # ポリシー設定（ACT, Diffusion）
-├── slurm/                         # Slurmジョブ投下ツール
-│   └── src/slurm_submit/
+├── lifter/                        # Slurmジョブ投下ツール
+│   └── src/lifter/
 ├── data/                          # データ保存
 │   └── tfrecord_logs/             # 収集エピソード
 └── scripts/                       # ユーティリティ
@@ -359,7 +370,7 @@ ros2 launch crane_x7_bringup data_collection.launch.py  # カメラ+ロガー（
 - [docs/vla-rl.md](docs/vla-rl.md) - VLA強化学習（SimpleVLA-RL方式）
 - [docs/remote.md](docs/remote.md) - リモートGPU推論・VLA-RLトレーニング（Vast.ai、Runpod）
 - [docs/sim.md](docs/sim.md) - Liftシミュレータ抽象化
-- [docs/slurm.md](docs/slurm.md) - Slurmジョブ投下ツール
+- [docs/lifter.md](docs/lifter.md) - lifter (Slurmジョブ投下ツール)
 - [docs/lerobot.md](docs/lerobot.md) - LeRobot統合
 - [docs/gemini.md](docs/gemini.md) - Gemini API統合
 

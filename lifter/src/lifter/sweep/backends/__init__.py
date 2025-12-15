@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from slurm_submit.clients.slurm import JobInfo
+    from lifter.clients.slurm import JobInfo
 
 
 @runtime_checkable
@@ -67,6 +67,6 @@ class ExecutionBackend(Protocol):
         ...
 
 
-from slurm_submit.sweep.backends.local import LocalExecutionBackend
+from lifter.sweep.backends.local import LocalExecutionBackend
 
 __all__ = ["ExecutionBackend", "LocalExecutionBackend"]

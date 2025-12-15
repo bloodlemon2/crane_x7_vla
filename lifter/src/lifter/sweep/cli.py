@@ -10,14 +10,14 @@ from typing import Annotated, Optional
 import typer
 from rich.panel import Panel
 
-from slurm_submit.core import (
+from lifter.core import (
     console,
     create_clients,
     load_local_settings_with_error,
     load_settings_with_error,
 )
-from slurm_submit.sweep.engine import LocalSweepEngine, SweepEngine, create_custom_job_generator
-from slurm_submit.sweep.wandb_client import WandbSweepClient, WandbSweepError
+from lifter.sweep.engine import LocalSweepEngine, SweepEngine, create_custom_job_generator
+from lifter.sweep.wandb_client import WandbSweepClient, WandbSweepError
 
 
 sweep_app = typer.Typer(
@@ -152,7 +152,7 @@ def _sweep_start_local(
     dry_run: bool,
 ) -> None:
     """ローカルモードでSweepを開始."""
-    from slurm_submit.sweep.backends.local import LocalExecutionBackend
+    from lifter.sweep.backends.local import LocalExecutionBackend
 
     # ローカル設定を読み込み
     settings = load_local_settings_with_error(env_file)
@@ -420,7 +420,7 @@ def _sweep_resume_local(
     dry_run: bool,
 ) -> None:
     """ローカルモードでSweepを再開."""
-    from slurm_submit.sweep.backends.local import LocalExecutionBackend
+    from lifter.sweep.backends.local import LocalExecutionBackend
 
     # ローカル設定を読み込み
     settings = load_local_settings_with_error(env_file)

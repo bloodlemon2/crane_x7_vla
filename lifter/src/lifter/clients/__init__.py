@@ -5,13 +5,13 @@
 SSH/SCP操作とSlurmコマンドのラッパーを提供する。
 """
 
-from slurm_submit.clients.slurm import (
+from lifter.clients.slurm import (
     JobInfo,
     JobMonitor,
     SlurmClient,
     SlurmError,
 )
-from slurm_submit.clients.ssh import SSHClient, SSHError
+from lifter.clients.ssh import SSHClient, SSHError
 
 __all__ = [
     "SSHClient",

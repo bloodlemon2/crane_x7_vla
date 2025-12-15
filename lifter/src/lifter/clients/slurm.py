@@ -18,12 +18,12 @@ from typing import TYPE_CHECKING, Callable
 from rich.console import Group
 from rich.live import Live
 
-from slurm_submit.clients.ssh import SSHClient
-from slurm_submit.config import SlurmConfig
-from slurm_submit.core.console import console
-from slurm_submit.ui.monitor import MonitorDisplayBuilder, MonitorState
-from slurm_submit.ui.status_table import print_job_status_table
-from slurm_submit.utils import parse_job_id
+from lifter.clients.ssh import SSHClient
+from lifter.config import SlurmConfig
+from lifter.core.console import console
+from lifter.ui.monitor import MonitorDisplayBuilder, MonitorState
+from lifter.ui.status_table import print_job_status_table
+from lifter.utils import parse_job_id
 
 if TYPE_CHECKING:
     pass

@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 
 import paramiko
 
-from slurm_submit.config import SSHConfig
-from slurm_submit.core.console import console
+from lifter.config import SSHConfig
+from lifter.core.console import console
 
 if TYPE_CHECKING:
     from paramiko.channel import ChannelFile

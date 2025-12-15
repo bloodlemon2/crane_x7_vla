@@ -6,7 +6,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "slurm-submit"
+name = "lifter"
 version = "0.1.0"
 description = "SSH経由でSlurmクラスターにジョブを投下するツール"
 readme = "README.md"
@@ -50,13 +50,13 @@ dev = [
 ]
 
 [project.scripts]
-slurm-submit = "slurm_submit.cli:app"
+lifter = "lifter.cli:app"
 
 [project.urls]
 Repository = "https://github.com/nop/crane_x7_vla"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/slurm_submit"]
+packages = ["src/lifter"]
 
 [tool.ruff]
 line-length = 100

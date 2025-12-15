@@ -1,4 +1,4 @@
-# Slurm ジョブ投下ツール
+# lifter - Slurm ジョブ投下ツール
 
 SSH経由でSlurmクラスターにジョブを投下するツール。W&B Sweep統合によるハイパーパラメータ探索をサポート。
 
@@ -15,7 +15,7 @@ SSH経由でSlurmクラスターにジョブを投下するツール。W&B Sweep
 ## クイックスタート
 
 ```bash
-cd slurm
+cd lifter
 pip install -e .
 
 # 環境設定
@@ -23,19 +23,19 @@ cp .env.template .env
 # .envを編集
 
 # ジョブ投下
-slurm-submit submit jobs/train.sh
+lifter submit jobs/train.sh
 
 # ジョブ状態確認
-slurm-submit status
+lifter status
 
 # ジョブ完了待機（ログ表示あり）
-slurm-submit wait <job_id>
+lifter wait <job_id>
 ```
 
 ## インストール
 
 ```bash
-cd slurm
+cd lifter
 pip install -e .
 ```
 
@@ -99,7 +99,7 @@ cp .env.template .env
 ### submit - ジョブ投下
 
 ```bash
-slurm-submit submit <script> [OPTIONS]
+lifter submit <script> [OPTIONS]
 ```
 
 | オプション | 説明 |
@@ -112,19 +112,19 @@ slurm-submit submit <script> [OPTIONS]
 
 ```bash
 # ジョブ投下
-slurm-submit submit jobs/train.sh
+lifter submit jobs/train.sh
 
 # ドライラン
-slurm-submit submit jobs/train.sh --dry-run
+lifter submit jobs/train.sh --dry-run
 
 # 別の環境設定を使用
-slurm-submit submit jobs/train.sh -e .env.production
+lifter submit jobs/train.sh -e .env.production
 ```
 
 ### status - 状態確認
 
 ```bash
-slurm-submit status [JOB_ID] [OPTIONS]
+lifter status [JOB_ID] [OPTIONS]
 ```
 
 | オプション | 説明 |
@@ -137,19 +137,19 @@ slurm-submit status [JOB_ID] [OPTIONS]
 
 ```bash
 # 自分のジョブ一覧
-slurm-submit status
+lifter status
 
 # 特定ジョブの状態
-slurm-submit status 12345
+lifter status 12345
 
 # 全ユーザーのジョブ
-slurm-submit status --all
+lifter status --all
 ```
 
 ### cancel - ジョブキャンセル
 
 ```bash
-slurm-submit cancel <job_id> [OPTIONS]
+lifter cancel <job_id> [OPTIONS]
 ```
 
 | オプション | 説明 |
@@ -160,13 +160,13 @@ slurm-submit cancel <job_id> [OPTIONS]
 **例:**
 
 ```bash
-slurm-submit cancel 12345
+lifter cancel 12345
 ```
 
 ### wait - 完了待機
 
 ```bash
-slurm-submit wait <job_id> [OPTIONS]
+lifter wait <job_id> [OPTIONS]
 ```
 
 | オプション | 説明 |
@@ -182,13 +182,13 @@ slurm-submit wait <job_id> [OPTIONS]
 
 ```bash
 # ログ表示しながら待機
-slurm-submit wait 12345
+lifter wait 12345
 
 # ログなしで待機
-slurm-submit wait 12345 --no-log
+lifter wait 12345 --no-log
 
 # タイムアウト設定
-slurm-submit wait 12345 --timeout 3600
+lifter wait 12345 --timeout 3600
 ```
 
 ## W&B Sweep連携
@@ -196,7 +196,7 @@ slurm-submit wait 12345 --timeout 3600
 ### sweep start - 新規Sweep開始
 
 ```bash
-slurm-submit sweep start <config.yaml> [OPTIONS]
+lifter sweep start <config.yaml> [OPTIONS]
 ```
 
 | オプション | 説明 |
@@ -207,41 +207,77 @@ slurm-submit sweep start <config.yaml> [OPTIONS]
 | `--log-interval`, `-l` | ログポーリング間隔（秒） |
 | `--template`, `-t` | ジョブテンプレートファイル |
 | `--dry-run` | ドライラン |
+| `--local` | ローカル実行（SSH/Slurm不要） |
 | `--password`, `-p` | SSHパスワード |
 
 **例:**
 
 ```bash
 # Sweep開始（10回実行）
-slurm-submit sweep start sweeps/openvla.yaml --max-runs 10
+lifter sweep start sweeps/openvla.yaml --max-runs 10
 
 # 並列実行（3ジョブ同時）
-slurm-submit sweep start sweeps/openvla.yaml --max-runs 20 --max-concurrent 3
+lifter sweep start sweeps/openvla.yaml --max-runs 20 --max-concurrent 3
 ```
 
 ### sweep resume - Sweep再開
 
 ```bash
-slurm-submit sweep resume <sweep_id> [OPTIONS]
+lifter sweep resume <sweep_id> [OPTIONS]
 ```
 
 **例:**
 
 ```bash
 # 既存Sweepを再開
-slurm-submit sweep resume abc123def --max-runs 10
+lifter sweep resume abc123def --max-runs 10
 ```
+
+### ローカルSweep実行
+
+SSH/Slurmを使わずにローカル環境でSweepを実行できます。
+
+```bash
+# ローカルでSweep開始（テンプレート必須）
+lifter sweep start examples/sweeps/sweep_openvla.yaml \
+  --local \
+  --template examples/templates_local/openvla_sweep.sh \
+  --max-runs 5
+
+# ローカルで並列実行
+lifter sweep start examples/sweeps/sweep_pi0.yaml \
+  --local \
+  --template examples/templates_local/pi0_sweep.sh \
+  --max-runs 10 \
+  --max-concurrent 2
+
+# ローカルSweep再開
+lifter sweep resume <SWEEP_ID> \
+  --local \
+  --template examples/templates_local/openvla_sweep.sh
+```
+
+**注意点:**
+- `--local`使用時は`--template`が必須
+- ローカル用テンプレートは`examples/templates_local/`にあります
+- SSH/Slurm設定（`.env`のSSH/Slurm関連変数）は不要
+- W&B設定（`WANDB_API_KEY`等）は必要
+
+**ローカル用テンプレート:**
+- `openvla_sweep.sh` - OpenVLA用
+- `pi0_sweep.sh` - Pi0用
+- `pi05_sweep.sh` - Pi0.5用
 
 ### sweep status - Sweep状態確認
 
 ```bash
-slurm-submit sweep status <sweep_id> [OPTIONS]
+lifter sweep status <sweep_id> [OPTIONS]
 ```
 
 **例:**
 
 ```bash
-slurm-submit sweep status abc123def
+lifter sweep status abc123def
 ```
 
 ### Sweep設定ファイル例

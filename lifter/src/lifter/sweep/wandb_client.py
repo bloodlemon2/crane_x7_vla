@@ -18,7 +18,7 @@ from typing import Any
 import yaml
 from rich.console import Console
 
-from slurm_submit.config import WandbConfig
+from lifter.config import WandbConfig
 
 console = Console()
 

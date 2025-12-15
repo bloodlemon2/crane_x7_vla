@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING
 
 from rich.table import Table
 
-from slurm_submit.core.console import console
+from lifter.core.console import console
 
 if TYPE_CHECKING:
-    from slurm_submit.clients.slurm import JobInfo
+    from lifter.clients.slurm import JobInfo
 
 
 def print_job_status_table(jobs: list["JobInfo"]) -> None:

@@ -13,13 +13,13 @@ from typing import Annotated, Optional
 
 import typer
 
-from slurm_submit import __version__
-from slurm_submit.clients import SlurmError
-from slurm_submit.config import load_env_vars
-from slurm_submit.core import console, create_clients, load_settings_with_error
+from lifter import __version__
+from lifter.clients import SlurmError
+from lifter.config import load_env_vars
+from lifter.core import console, create_clients, load_settings_with_error
 
 app = typer.Typer(
-    name="slurm-submit",
+    name="lifter",
     help="SSH経由でSlurmクラスターにジョブを投下するツール",
     add_completion=False,
     no_args_is_help=True,
@@ -29,7 +29,7 @@ app = typer.Typer(
 def version_callback(value: bool) -> None:
     """バージョン表示コールバック."""
     if value:
-        console.print(f"slurm-submit version {__version__}")
+        console.print(f"lifter version {__version__}")
         raise typer.Exit()
 
 
@@ -329,7 +329,7 @@ def wait(
 def _add_sweep_commands() -> None:
     """Sweepサブコマンドを追加."""
     try:
-        from slurm_submit.sweep.cli import sweep_app
+        from lifter.sweep.cli import sweep_app
         app.add_typer(sweep_app, name="sweep")
     except ImportError:
         # Sweep機能が利用できない場合は無視

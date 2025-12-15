@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from slurm_submit.config import load_env_vars
-from slurm_submit.core.console import console
+from lifter.config import load_env_vars
+from lifter.core.console import console
 
 
 class TemplateError(Exception):
