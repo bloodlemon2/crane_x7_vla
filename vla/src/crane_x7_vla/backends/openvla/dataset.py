@@ -21,11 +21,12 @@ import numpy as np
 import tensorflow as tf
 import torch
 from PIL import Image
-from prismatic.models.backbones.llm.prompting import PromptBuilder
-from prismatic.models.backbones.vision import ImageTransform
-from prismatic.vla.action_tokenizer import ActionTokenizer
 from torch.utils.data import IterableDataset
 from transformers import PreTrainedTokenizerBase
+
+from crane_x7_vla.backends.common.prompting import PromptBuilder
+from crane_x7_vla.backends.common.tokenizer import ActionTokenizer
+from crane_x7_vla.backends.common.types import ImageTransform
 
 
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)

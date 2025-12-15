@@ -29,8 +29,6 @@ import tqdm
 import wandb
 from accelerate import PartialState
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from prismatic.models.backbones.llm.prompting import PurePromptBuilder, VicunaV15ChatPromptBuilder
-from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import MultiStepLR
@@ -38,6 +36,16 @@ from torch.utils.data import DataLoader
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
 from transformers.modeling_outputs import CausalLMOutputWithPast  # noqa: TC002
 
+from crane_x7_vla.backends.common.data_utils import save_dataset_statistics
+from crane_x7_vla.backends.common.hf import (
+    OpenVLAConfig as HFOpenVLAConfig,
+)
+from crane_x7_vla.backends.common.hf import (
+    OpenVLAForActionPrediction,
+    PrismaticImageProcessor,
+    PrismaticProcessor,
+)
+from crane_x7_vla.backends.common.prompting import PurePromptBuilder, VicunaV15ChatPromptBuilder
 from crane_x7_vla.backends.openvla_oft.components import (
     FiLMedVisionBackbone,
     L1RegressionActionHead,
@@ -49,14 +57,6 @@ from crane_x7_vla.backends.openvla_oft.dataset import (
     CraneX7OFTDataset,
     OpenVLAOFTBatchTransform,
     PaddedCollatorForOFT,
-)
-from crane_x7_vla.backends.openvla_oft.hf import (
-    OpenVLAConfig as HFOpenVLAConfig,
-)
-from crane_x7_vla.backends.openvla_oft.hf import (
-    OpenVLAForActionPrediction,
-    PrismaticImageProcessor,
-    PrismaticProcessor,
 )
 from crane_x7_vla.backends.openvla_oft.train_utils import (
     get_current_action_mask,
@@ -262,9 +262,16 @@ class OpenVLAOFTTrainer:
             vla.gradient_checkpointing_enable()
             logger.info("Gradient checkpointing enabled")
 
-        # Set number of images
+        # Set number of images (if supported by vision backbone)
         if self.cfg.use_multi_image:
-            vla.vision_backbone.set_num_images_in_input(self.cfg.num_images)
+            if hasattr(vla.vision_backbone, "set_num_images_in_input"):
+                vla.vision_backbone.set_num_images_in_input(self.cfg.num_images)
+            else:
+                logger.warning(
+                    "Vision backbone does not support multi-image input. "
+                    "Disabling multi-image mode. Use a compatible model for multi-image support."
+                )
+                self.cfg.use_multi_image = False
 
         # Get LLM hidden dimension
         llm_dim = vla.llm_dim  # Usually 4096 for Llama-2 7B

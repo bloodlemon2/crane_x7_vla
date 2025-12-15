@@ -4,7 +4,7 @@
 processing_prismatic.py
 
 HuggingFace-style preprocessor definitions for Prismatic VLMs.
-公式openvla-oftリポジトリのprismatic/extern/hf/processing_prismatic.pyをコピー。
+公式openvla-oftリポジトリのprismatic/extern/hf/processing_prismatic.pyをベースに共通化。
 """
 
 from typing import Any, ClassVar

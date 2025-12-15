@@ -23,19 +23,17 @@ import wandb
 from accelerate import PartialState
 from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from PIL import Image
-from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig as HFOpenVLAConfig
-from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
-from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
-from prismatic.models.backbones.llm.prompting import PurePromptBuilder, VicunaV15ChatPromptBuilder
-from prismatic.util.data_utils import PaddedCollatorForActionPrediction
-from prismatic.vla.action_tokenizer import ActionTokenizer
-from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
 from transformers.modeling_outputs import CausalLMOutputWithPast  # noqa: TC002
 
+from crane_x7_vla.backends.common.data_utils import PaddedCollatorForActionPrediction, save_dataset_statistics
+from crane_x7_vla.backends.common.hf import OpenVLAConfig as HFOpenVLAConfig
+from crane_x7_vla.backends.common.hf import OpenVLAForActionPrediction, PrismaticImageProcessor, PrismaticProcessor
+from crane_x7_vla.backends.common.prompting import PurePromptBuilder, VicunaV15ChatPromptBuilder
+from crane_x7_vla.backends.common.tokenizer import ActionTokenizer
 from crane_x7_vla.backends.openvla.config import OpenVLAConfig
 from crane_x7_vla.backends.openvla.dataset import CraneX7BatchTransform, CraneX7Dataset
 from crane_x7_vla.core.base import VLABackend

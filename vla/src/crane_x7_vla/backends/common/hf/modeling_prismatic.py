@@ -4,11 +4,11 @@
 modeling_prismatic.py
 
 Core HuggingFace-style PrismaticPreTrainedModel and PrismaticForConditionalGeneration class definitions.
-公式openvla-oftリポジトリのprismatic/extern/hf/modeling_prismatic.pyをコピー。
+公式openvla-oftリポジトリのprismatic/extern/hf/modeling_prismatic.pyをベースに共通化。
 
 importパスを修正:
-- prismatic.training.train_utils -> ..train_utils
-- prismatic.vla.constants -> ..constants
+- ..constants -> crane_x7_vla.backends.openvla_oft.constants
+- ..train_utils -> crane_x7_vla.backends.openvla_oft.train_utils
 """
 
 import logging
@@ -27,7 +27,8 @@ from timm.models.vision_transformer import LayerScale
 from transformers import AutoModelForCausalLM, PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
-from ..constants import (
+from crane_x7_vla.backends.common.hf.configuration_prismatic import OpenVLAConfig, PrismaticConfig
+from crane_x7_vla.backends.openvla_oft.constants import (
     ACTION_DIM,
     ACTION_PROPRIO_NORMALIZATION_TYPE,
     ACTION_TOKEN_BEGIN_IDX,
@@ -36,11 +37,10 @@ from ..constants import (
     STOP_INDEX,
     NormalizationType,
 )
-from ..train_utils import (
+from crane_x7_vla.backends.openvla_oft.train_utils import (
     get_current_action_mask,
     get_next_actions_mask,
 )
-from .configuration_prismatic import OpenVLAConfig, PrismaticConfig
 
 
 # Set up logger

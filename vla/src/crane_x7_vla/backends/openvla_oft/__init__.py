@@ -3,7 +3,8 @@
 
 """OpenVLA-OFT (Optimized Fine-Tuning) backend for CRANE-X7 VLA training."""
 
-from crane_x7_vla.backends.openvla_oft.backend import OpenVLAOFTBackend
+# NOTE: backend.py imports are deferred to avoid circular imports with common.hf
+# Use: from crane_x7_vla.backends.openvla_oft.backend import OpenVLAOFTBackend
 from crane_x7_vla.backends.openvla_oft.components import (
     FiLMedVisionBackbone,
     L1RegressionActionHead,
@@ -33,21 +34,21 @@ from crane_x7_vla.backends.openvla_oft.dataset import (
     OpenVLAOFTBatchTransform,
     PaddedCollatorForOFT,
 )
-from crane_x7_vla.backends.openvla_oft.hf import (
-    OpenVLAConfig,
-    OpenVLAForActionPrediction,
-    PrismaticConfig,
-    PrismaticForConditionalGeneration,
-    PrismaticImageProcessor,
-    PrismaticPreTrainedModel,
-    PrismaticProcessor,
-)
 from crane_x7_vla.backends.openvla_oft.train_utils import (
     compute_actions_l1_loss,
     compute_token_accuracy,
     get_current_action_mask,
     get_next_actions_mask,
 )
+
+
+def __getattr__(name: str):
+    """Lazy import for OpenVLAOFTBackend to avoid circular imports."""
+    if name == "OpenVLAOFTBackend":
+        from crane_x7_vla.backends.openvla_oft.backend import OpenVLAOFTBackend
+
+        return OpenVLAOFTBackend
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
@@ -66,18 +67,11 @@ __all__ = [
     "MLPResNetBlock",
     "MultiImageConfig",
     "NormalizationType",
-    "OpenVLAConfig",
-    "OpenVLAForActionPrediction",
     "OpenVLAOFTBackend",
     "OpenVLAOFTBatchTransform",
     "OpenVLAOFTConfig",
     "OpenVLAOFTSpecificConfig",
     "PaddedCollatorForOFT",
-    "PrismaticConfig",
-    "PrismaticForConditionalGeneration",
-    "PrismaticImageProcessor",
-    "PrismaticPreTrainedModel",
-    "PrismaticProcessor",
     "ProprioConfig",
     "ProprioProjector",
     "compute_actions_l1_loss",

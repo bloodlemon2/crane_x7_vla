@@ -4,7 +4,7 @@
 configuration_prismatic.py
 
 HuggingFace-style configuration definition for Prismatic VLMs.
-公式openvla-oftリポジトリのprismatic/extern/hf/configuration_prismatic.pyをコピー。
+公式openvla-oftリポジトリのprismatic/extern/hf/configuration_prismatic.pyをベースに共通化。
 """
 
 from typing import Any

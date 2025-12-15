@@ -3,16 +3,16 @@
 """
 HuggingFace互換モジュール.
 
-公式openvla-oftリポジトリのprismatic/extern/hf/をコピー。
+openvla_oft/hf/からの共通化。OpenVLAとOpenVLA-OFTバックエンドで共有。
 """
 
-from .configuration_prismatic import OpenVLAConfig, PrismaticConfig
-from .modeling_prismatic import (
+from crane_x7_vla.backends.common.hf.configuration_prismatic import OpenVLAConfig, PrismaticConfig
+from crane_x7_vla.backends.common.hf.modeling_prismatic import (
     OpenVLAForActionPrediction,
     PrismaticForConditionalGeneration,
     PrismaticPreTrainedModel,
 )
-from .processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
+from crane_x7_vla.backends.common.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
 
 
 __all__ = [
