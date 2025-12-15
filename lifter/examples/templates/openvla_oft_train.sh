@@ -57,6 +57,7 @@ export TF_CPP_MIN_LOG_LEVEL=2
 export WANDB_API_KEY={{WANDB_API_KEY}}
 export WANDB_PROJECT={{WANDB_PROJECT}}
 export WANDB_ENTITY={{WANDB_ENTITY}}
+export HF_TOKEN={{HF_TOKEN}}
 export WANDB_MODE=${WANDB_MODE:-online}
 
 # データパス設定

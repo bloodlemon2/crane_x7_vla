@@ -19,6 +19,7 @@
 #   - DATA_ROOT: データディレクトリ（ホスト側パス）
 #   - OUTPUT_DIR: 出力ディレクトリ（ホスト側パス）
 #   - WANDB_API_KEY, WANDB_ENTITY, WANDB_PROJECT: W&B設定
+#   - HF_TOKEN: Hugging Face APIトークン（OpenVLAモデル用）
 #
 # =============================================================================
 
@@ -40,6 +41,9 @@ CONTAINER_IMAGE={{SLURM_CONTAINER}}
 WANDB_API_KEY={{WANDB_API_KEY}}
 WANDB_PROJECT={{WANDB_PROJECT}}
 WANDB_ENTITY={{WANDB_ENTITY}}
+
+# Hugging Face Configuration
+HF_TOKEN={{HF_TOKEN}}
 
 # データパス設定（ホスト側）
 DATA_ROOT=${DATA_ROOT:-{{DATA_ROOT}}}
@@ -99,6 +103,7 @@ docker run --rm \
     -e WANDB_API_KEY="${WANDB_API_KEY}" \
     -e WANDB_PROJECT="${WANDB_PROJECT}" \
     -e WANDB_ENTITY="${WANDB_ENTITY}" \
+    -e HF_TOKEN="${HF_TOKEN}" \
     -e PYTHONUNBUFFERED=1 \
     -e TF_CPP_MIN_LOG_LEVEL=2 \
     -v "${DATA_ROOT}:${CONTAINER_DATA_ROOT}:ro" \

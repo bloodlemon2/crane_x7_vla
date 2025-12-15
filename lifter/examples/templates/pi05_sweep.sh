@@ -57,6 +57,7 @@ export WANDB_MODE=online
 export WANDB_API_KEY={{WANDB_API_KEY}}
 export WANDB_PROJECT={{WANDB_PROJECT}}
 export WANDB_ENTITY={{WANDB_ENTITY}}
+export HF_TOKEN={{HF_TOKEN}}
 
 # Python/CUDA Configuration
 export PYTHONUNBUFFERED=1
