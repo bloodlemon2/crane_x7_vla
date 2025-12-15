@@ -19,46 +19,60 @@ The output dataset will be saved to $HF_LEROBOT_HOME/crane_x7_vla.
 
 import argparse
 import logging
-import os
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import numpy as np
 import tensorflow as tf
 
+
 # Try to import LeRobot (may not be available in all environments)
+LEROBOT_AVAILABLE = False
+HF_LEROBOT_HOME = None
+LeRobotDataset = None
+
 try:
-    from lerobot.common.datasets.lerobot_dataset import (
-        HF_LEROBOT_HOME,
-        LeRobotDataset,
-    )
+    # LeRobot 0.4.x API
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+
     LEROBOT_AVAILABLE = True
 except ImportError:
-    LEROBOT_AVAILABLE = False
+    try:
+        # LeRobot 0.3.x / older API
+        from lerobot.common.datasets.lerobot_dataset import (
+            HF_LEROBOT_HOME,
+            LeRobotDataset,
+        )
+
+        LEROBOT_AVAILABLE = True
+    except ImportError:
+        pass
+
+if not LEROBOT_AVAILABLE:
     print("Warning: LeRobot not installed. Install with: pip install lerobot")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# CRANE-X7 TFRecord feature description
+# CRANE-X7 TFRecord feature description (new format with timestep)
 FEATURE_DESCRIPTION = {
-    "observation/state": tf.io.FixedLenFeature([8], tf.float32),
-    "observation/image": tf.io.FixedLenFeature([], tf.string),
+    "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
+    "observation/image_primary": tf.io.FixedLenFeature([], tf.string),
+    "observation/timestep": tf.io.FixedLenFeature([], tf.int64),
     "action": tf.io.FixedLenFeature([8], tf.float32),
-    "prompt": tf.io.FixedLenFeature([], tf.string),
+    "task/language_instruction": tf.io.FixedLenFeature([], tf.string),
+    "dataset_name": tf.io.FixedLenFeature([], tf.string),
 }
 
-# Alternative feature names for compatibility
+# Alternative feature names for compatibility (old format)
 ALTERNATIVE_FEATURES = {
     "observation/state": tf.io.FixedLenFeature([8], tf.float32),
-    "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
     "observation/image": tf.io.FixedLenFeature([], tf.string),
-    "observation/image_primary": tf.io.FixedLenFeature([], tf.string),
     "action": tf.io.FixedLenFeature([8], tf.float32),
     "prompt": tf.io.FixedLenFeature([], tf.string),
-    "task/language_instruction": tf.io.FixedLenFeature([], tf.string),
 }
 
 
@@ -166,11 +180,13 @@ def iterate_tfrecord_episodes(
                 if prompt:
                     task_name = prompt
 
-            steps.append({
-                "state": parsed.get("state", tf.zeros([8], dtype=tf.float32)).numpy(),
-                "action": parsed.get("action", tf.zeros([8], dtype=tf.float32)).numpy(),
-                "image": image,
-            })
+            steps.append(
+                {
+                    "state": parsed.get("state", tf.zeros([8], dtype=tf.float32)).numpy(),
+                    "action": parsed.get("action", tf.zeros([8], dtype=tf.float32)).numpy(),
+                    "image": image,
+                }
+            )
 
         if steps:
             yield steps, task_name
@@ -194,9 +210,7 @@ def convert_to_lerobot(
         push_to_hub: Whether to push to Hugging Face Hub
     """
     if not LEROBOT_AVAILABLE:
-        raise ImportError(
-            "LeRobot is required for this script. Install with: pip install lerobot"
-        )
+        raise ImportError("LeRobot is required for this script. Install with: pip install lerobot")
 
     # Find TFRecord files
     tfrecord_files = find_tfrecord_files(data_dir)
@@ -212,9 +226,7 @@ def convert_to_lerobot(
             logger.info(f"Removing existing dataset at {output_path}")
             shutil.rmtree(output_path)
         else:
-            raise ValueError(
-                f"Dataset already exists at {output_path}. Use --overwrite to replace."
-            )
+            raise ValueError(f"Dataset already exists at {output_path}. Use --overwrite to replace.")
 
     # Create LeRobot dataset
     # Define features according to OpenPI expectations
@@ -256,12 +268,14 @@ def convert_to_lerobot(
 
         # Add each step to the dataset
         for step in steps:
-            dataset.add_frame({
-                "observation.images.primary": step["image"],
-                "observation.state": step["state"],
-                "action": step["action"],
-                "task": task_name,
-            })
+            dataset.add_frame(
+                {
+                    "observation.images.primary": step["image"],
+                    "observation.state": step["state"],
+                    "action": step["action"],
+                    "task": task_name,
+                }
+            )
             step_count += 1
 
         # Save episode
@@ -288,9 +302,7 @@ def convert_to_lerobot(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Convert CRANE-X7 TFRecord data to LeRobot format"
-    )
+    parser = argparse.ArgumentParser(description="Convert CRANE-X7 TFRecord data to LeRobot format")
     parser.add_argument(
         "--data_dir",
         type=Path,

@@ -20,7 +20,7 @@ CRANE-X7ロボットアームとVLAを使用した制御プログラムです。
 | ドキュメント | 説明 |
 |-------------|------|
 | [docs/ros2.md](docs/ros2.md) | ROS 2環境（実機制御、Gazebo、Docker Composeプロファイル） |
-| [docs/vla.md](docs/vla.md) | VLAファインチューニング（OpenVLA、MiniVLA、OpenPI） |
+| [docs/vla.md](docs/vla.md) | VLAファインチューニング（OpenVLA、MiniVLA、Pi0/Pi0.5） |
 | [docs/vla-rl.md](docs/vla-rl.md) | VLA強化学習（SimpleVLA-RL方式、PPO） |
 | [docs/sim.md](docs/sim.md) | Liftシミュレータ抽象化（ManiSkill、Genesis） |
 | [docs/lerobot.md](docs/lerobot.md) | LeRobot統合（ACT、Diffusion Policy） |
@@ -32,7 +32,7 @@ CRANE-X7ロボットアームとVLAを使用した制御プログラムです。
 | ディレクトリ | 説明 |
 |-------------|------|
 | `ros2/` | ROS 2ワークスペース。CRANE-X7の実機制御、Gazeboシミュレーション、テレオペレーション、データロギング（RLDS/TFRecord形式）、VLA推論ノード、Gemini API統合を含む。 |
-| `vla/` | VLAファインチューニング環境。OpenVLAおよびOpenPIを用いたモデルトレーニング、LoRAアダプター管理、設定ファイル生成を行う。 |
+| `vla/` | VLAファインチューニング環境。OpenVLA、MiniVLA、Pi0/Pi0.5を用いたモデルトレーニング、LoRAアダプター管理、設定ファイル生成を行う。 |
 | `vla-rl/` | VLA強化学習。SimpleVLA-RL方式でPPOを使用したVLAモデルのファインチューニング。 |
 | `sim/` | Liftシミュレータ統合。ManiSkill、Genesisなど複数シミュレータの統一抽象化レイヤー。 |
 | `lerobot/` | LeRobot統合。CRANE-X7用のRobotプラグイン、Teleoperatorプラグイン、ACT/Diffusionポリシー設定を含む。 |

@@ -9,7 +9,7 @@ designed specifically for VLA model fine-tuning.
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Iterator
 
 import numpy as np
 import torch
@@ -150,7 +150,9 @@ class PPOTrainer:
                 self.config.value_clip_range,
             )
             value_loss1 = F.mse_loss(new_values, batch.returns, reduction="none")
-            value_loss2 = F.mse_loss(value_pred_clipped, batch.returns, reduction="none")
+            value_loss2 = F.mse_loss(
+                value_pred_clipped, batch.returns, reduction="none"
+            )
             value_loss = torch.max(value_loss1, value_loss2).mean()
         else:
             value_loss = F.mse_loss(new_values, batch.returns)
@@ -168,7 +170,9 @@ class PPOTrainer:
         # Compute metrics
         with torch.no_grad():
             approx_kl = ((ratio - 1) - log_ratio).mean().item()
-            clip_fraction = ((ratio - 1.0).abs() > self.config.clip_ratio).float().mean().item()
+            clip_fraction = (
+                ((ratio - 1.0).abs() > self.config.clip_ratio).float().mean().item()
+            )
 
         metrics = {
             "policy_loss": policy_loss.item(),
@@ -212,7 +216,9 @@ class PPOTrainer:
         actions_t = torch.tensor(actions, device=self.device)
         rewards_t = torch.tensor(rewards, device=self.device, dtype=torch.float32)
         dones_t = torch.tensor(dones, device=self.device, dtype=torch.float32)
-        old_log_probs_t = torch.tensor(old_log_probs, device=self.device, dtype=torch.float32)
+        old_log_probs_t = torch.tensor(
+            old_log_probs, device=self.device, dtype=torch.float32
+        )
         old_values_t = torch.tensor(old_values, device=self.device, dtype=torch.float32)
 
         # Compute advantages and returns using GAE
@@ -275,17 +281,25 @@ class PPOTrainer:
 
             # Early stopping based on KL divergence
             if self.config.target_kl is not None:
-                avg_kl = np.mean([m["approx_kl"] for m in all_metrics[-len(list(self._create_minibatches(batch))):]])
+                avg_kl = np.mean(
+                    [
+                        m["approx_kl"]
+                        for m in all_metrics[
+                            -len(list(self._create_minibatches(batch))) :
+                        ]
+                    ]
+                )
                 if avg_kl > 1.5 * self.config.target_kl:
-                    logger.info(f"Early stopping at epoch {epoch} due to KL divergence: {avg_kl:.4f}")
+                    logger.info(
+                        f"Early stopping at epoch {epoch} due to KL divergence: {avg_kl:.4f}"
+                    )
                     break
 
         self.update_count += 1
 
         # Aggregate metrics
         final_metrics = {
-            key: np.mean([m[key] for m in all_metrics])
-            for key in all_metrics[0].keys()
+            key: np.mean([m[key] for m in all_metrics]) for key in all_metrics[0].keys()
         }
         final_metrics["num_epochs"] = epoch + 1
 

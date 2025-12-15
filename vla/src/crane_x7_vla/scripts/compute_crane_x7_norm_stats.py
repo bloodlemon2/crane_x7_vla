@@ -21,12 +21,12 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
 # Import CRANE-X7 data adapter
 from crane_x7_vla.data.adapters import CraneX7DataAdapter
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -62,20 +62,14 @@ class RunningStats:
             self._mean_of_squares = np.mean(batch**2, axis=0)
             self._min = np.min(batch, axis=0)
             self._max = np.max(batch, axis=0)
-            self._histograms = [
-                np.zeros(self._num_quantile_bins) for _ in range(vector_length)
-            ]
+            self._histograms = [np.zeros(self._num_quantile_bins) for _ in range(vector_length)]
             self._bin_edges = [
-                np.linspace(
-                    self._min[i] - 1e-10, self._max[i] + 1e-10, self._num_quantile_bins + 1
-                )
+                np.linspace(self._min[i] - 1e-10, self._max[i] + 1e-10, self._num_quantile_bins + 1)
                 for i in range(vector_length)
             ]
         else:
             if vector_length != self._mean.size:
-                raise ValueError(
-                    f"Vector length mismatch: expected {self._mean.size}, got {vector_length}"
-                )
+                raise ValueError(f"Vector length mismatch: expected {self._mean.size}, got {vector_length}")
 
             new_max = np.max(batch, axis=0)
             new_min = np.min(batch, axis=0)
@@ -94,9 +88,7 @@ class RunningStats:
 
         # Update running mean and mean of squares
         self._mean += (batch_mean - self._mean) * (num_elements / self._count)
-        self._mean_of_squares += (batch_mean_of_squares - self._mean_of_squares) * (
-            num_elements / self._count
-        )
+        self._mean_of_squares += (batch_mean_of_squares - self._mean_of_squares) * (num_elements / self._count)
 
         self._update_histograms(batch)
 
@@ -104,13 +96,9 @@ class RunningStats:
         """Adjust histograms when min or max changes."""
         for i in range(len(self._histograms)):
             old_edges = self._bin_edges[i]
-            new_edges = np.linspace(
-                self._min[i], self._max[i], self._num_quantile_bins + 1
-            )
+            new_edges = np.linspace(self._min[i], self._max[i], self._num_quantile_bins + 1)
 
-            new_hist, _ = np.histogram(
-                old_edges[:-1], bins=new_edges, weights=self._histograms[i]
-            )
+            new_hist, _ = np.histogram(old_edges[:-1], bins=new_edges, weights=self._histograms[i])
 
             self._histograms[i] = new_hist
             self._bin_edges[i] = new_edges
@@ -154,7 +142,7 @@ class RunningStats:
 def compute_statistics(
     data_dir: Path,
     output_dir: Path,
-    max_steps: Optional[int] = None,
+    max_steps: int | None = None,
     pad_to_dim: int = 32,
 ) -> dict:
     """
@@ -190,13 +178,9 @@ def compute_statistics(
 
         # Pad to target dimension if needed
         if state.shape[-1] < pad_to_dim:
-            state = np.pad(
-                state, (0, pad_to_dim - state.shape[-1]), mode="constant"
-            )
+            state = np.pad(state, (0, pad_to_dim - state.shape[-1]), mode="constant")
         if action.shape[-1] < pad_to_dim:
-            action = np.pad(
-                action, (0, pad_to_dim - action.shape[-1]), mode="constant"
-            )
+            action = np.pad(action, (0, pad_to_dim - action.shape[-1]), mode="constant")
 
         # Update statistics
         state_stats.update(state.reshape(1, -1))
@@ -223,7 +207,7 @@ def compute_statistics(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     output_file = output_dir / "norm_stats.json"
-    with open(output_file, "w") as f:
+    with output_file.open("w") as f:
         json.dump({"norm_stats": norm_stats}, f, indent=2)
 
     logger.info(f"Saved statistics to {output_file}")
@@ -232,9 +216,7 @@ def compute_statistics(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Compute normalization statistics for CRANE-X7 data"
-    )
+    parser = argparse.ArgumentParser(description="Compute normalization statistics for CRANE-X7 data")
     parser.add_argument(
         "--data_dir",
         type=Path,

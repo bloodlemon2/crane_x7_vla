@@ -105,7 +105,9 @@ class SparseRewardFunction(RewardFunction):
         done = terminated or truncated
 
         if done:
-            reward = self.success_reward if self._episode_success else self.failure_reward
+            reward = (
+                self.success_reward if self._episode_success else self.failure_reward
+            )
             return reward
 
         return 0.0

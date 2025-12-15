@@ -53,7 +53,9 @@ def to_frame_array(frame) -> np.ndarray:
     return np.asarray(frame)
 
 
-def record_episode(agent: Optional[dp.Agent], output: Path, steps: int, fps: int) -> None:
+def record_episode(
+    agent: Optional[dp.Agent], output: Path, steps: int, fps: int
+) -> None:
     base_env = gym.make(
         "PickPlace-CRANE-X7",
         render_mode="rgb_array",
@@ -90,9 +92,13 @@ def record_episode(agent: Optional[dp.Agent], output: Path, steps: int, fps: int
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Record PickPlace-CRANE-X7 policy rollout.")
+    parser = argparse.ArgumentParser(
+        description="Record PickPlace-CRANE-X7 policy rollout."
+    )
     parser.add_argument("--checkpoint", type=Path, default=Path("dreamer_agent.pth"))
-    parser.add_argument("--output", type=Path, default=Path("policy_videos/policy_rollout.mp4"))
+    parser.add_argument(
+        "--output", type=Path, default=Path("policy_videos/policy_rollout.mp4")
+    )
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--fps", type=int, default=20)
     return parser.parse_args()
@@ -106,7 +112,9 @@ def main():
 
     agent = load_agent(args.checkpoint)
     if agent is None:
-        print(f"[INFO] No valid checkpoint at {args.checkpoint}. Falling back to random actions.")
+        print(
+            f"[INFO] No valid checkpoint at {args.checkpoint}. Falling back to random actions."
+        )
     else:
         print(f"[INFO] Loaded policy from {args.checkpoint}.")
 

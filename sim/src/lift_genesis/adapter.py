@@ -57,7 +57,7 @@ class GenesisSimulator(Simulator):
         # Build scene with batch parallelization
         print(f"[Genesis] Building scene with n_envs={self._n_envs}")
         self._scene.build(n_envs=self._n_envs)
-        print(f"[Genesis] Scene built successfully")
+        print("[Genesis] Scene built successfully")
 
         # Configure robot after build (requires built scene)
         self._build_dof_mapping()
@@ -105,9 +105,7 @@ class GenesisSimulator(Simulator):
         rest_qpos = np.tile(CraneX7Config.REST_QPOS, (len(env_ids), 1))
         if self.config.robot_init_qpos_noise > 0 and seed is not None:
             rng = np.random.default_rng(seed)
-            noise = rng.normal(
-                0, self.config.robot_init_qpos_noise, rest_qpos.shape
-            )
+            noise = rng.normal(0, self.config.robot_init_qpos_noise, rest_qpos.shape)
             rest_qpos = rest_qpos + noise
 
         # Set position for specified envs
@@ -233,10 +231,10 @@ class GenesisSimulator(Simulator):
 
         if backend_name == "gpu":
             gs.init(backend=gs.cuda)
-            print(f"[Genesis] Backend set to CUDA (gs.cuda)")
+            print("[Genesis] Backend set to CUDA (gs.cuda)")
         else:
             gs.init(backend=gs.cpu)
-            print(f"[Genesis] Backend set to CPU (gs.cpu)")
+            print("[Genesis] Backend set to CPU (gs.cpu)")
 
     def _init_scene(self) -> None:
         """Create Genesis scene."""
@@ -287,8 +285,12 @@ class GenesisSimulator(Simulator):
         arm_kv = np.full(CraneX7Config.NUM_ARM_JOINTS, CraneX7Config.ARM_DAMPING)
 
         # Gripper gains
-        gripper_kp = np.full(CraneX7Config.NUM_GRIPPER_JOINTS, CraneX7Config.GRIPPER_STIFFNESS)
-        gripper_kv = np.full(CraneX7Config.NUM_GRIPPER_JOINTS, CraneX7Config.GRIPPER_DAMPING)
+        gripper_kp = np.full(
+            CraneX7Config.NUM_GRIPPER_JOINTS, CraneX7Config.GRIPPER_STIFFNESS
+        )
+        gripper_kv = np.full(
+            CraneX7Config.NUM_GRIPPER_JOINTS, CraneX7Config.GRIPPER_DAMPING
+        )
 
         # Concatenate
         kp = np.concatenate([arm_kp, gripper_kp])
@@ -398,7 +400,9 @@ class GenesisSimulator(Simulator):
                     # Single image - tile for all envs
                     rgb = np.tile(rgb[np.newaxis, ...], (self._n_envs, 1, 1, 1))
                 elif rgb.ndim == 4 and rgb.shape[0] != self._n_envs:
-                    print(f"[Genesis] Warning: RGB shape {rgb.shape} doesn't match n_envs={self._n_envs}")
+                    print(
+                        f"[Genesis] Warning: RGB shape {rgb.shape} doesn't match n_envs={self._n_envs}"
+                    )
                 rgb_images = rgb
 
             if depth is not None:

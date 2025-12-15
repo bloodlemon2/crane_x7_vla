@@ -1,0 +1,154 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025 nop
+#
+# =============================================================================
+# OpenVLA-OFT Training Template for Slurm
+# =============================================================================
+#
+# このテンプレートはOpenVLA-OFT (Optimized Fine-Tuning)トレーニングを実行します。
+#
+# OpenVLA-OFT: L1回帰アクションヘッド + アクションチャンキング + FiLM + Proprio入力
+#
+# 使用方法:
+#   slurm-submit submit jobs/openvla_oft_train.sh
+#
+# =============================================================================
+
+#SBATCH --job-name={{SLURM_JOB_PREFIX}}_openvla_oft_train
+#SBATCH --partition={{SLURM_PARTITION}}
+#SBATCH --nodes=1
+#SBATCH --tasks-per-node=1
+#SBATCH --cpus-per-task={{SLURM_CPUS}}
+#SBATCH --gpus-per-task={{SLURM_GPUS}}
+#SBATCH --time={{SLURM_TIME}}
+#SBATCH --output=logs/openvla_oft_train_%j.out
+#SBATCH --error=logs/openvla_oft_train_%j.err
+
+#SBATCH --container={{SLURM_CONTAINER}}
+
+set -euo pipefail
+
+# =============================================================================
+# Environment Setup
+# =============================================================================
+echo "=========================================="
+echo "OpenVLA-OFT Training"
+echo "=========================================="
+echo "Date: $(date)"
+echo "Hostname: $(hostname)"
+echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-N/A}"
+echo "SLURM_JOB_NODELIST: ${SLURM_JOB_NODELIST:-N/A}"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-N/A}"
+echo "=========================================="
+
+# 作業ディレクトリに移動
+cd "${SLURM_SUBMIT_DIR:-{{SLURM_REMOTE_WORKDIR}}}"
+echo "Working directory: $(pwd)"
+
+# ログディレクトリを作成
+mkdir -p logs
+
+# 環境変数の設定
+export PYTHONUNBUFFERED=1
+export TF_CPP_MIN_LOG_LEVEL=2
+
+# W&B設定（オプション）
+export WANDB_API_KEY={{WANDB_API_KEY}}
+export WANDB_PROJECT={{WANDB_PROJECT}}
+export WANDB_ENTITY={{WANDB_ENTITY}}
+export HF_TOKEN={{HF_TOKEN}}
+export WANDB_MODE=${WANDB_MODE:-online}
+
+# データパス設定
+DATA_ROOT=${DATA_ROOT:-{{DATA_ROOT}}}
+OUTPUT_DIR=${OUTPUT_DIR:-{{OUTPUT_DIR}}}
+
+
+# トレーニング設定（Sweepでオーバーライド可能）
+BATCH_SIZE=${BATCH_SIZE:-{{batch_size}}}
+LEARNING_RATE=${LEARNING_RATE:-{{learning_rate}}}
+MAX_STEPS=${MAX_STEPS:-{{MAX_STEPS}}}
+SAVE_INTERVAL=${SAVE_INTERVAL:-{{SAVE_INTERVAL}}}
+EVAL_INTERVAL=${EVAL_INTERVAL:-{{EVAL_INTERVAL}}}
+
+# OFT固有設定
+ACTION_HORIZON=${ACTION_HORIZON:-{{action_horizon}}}
+FILM_ENABLED=${FILM_ENABLED:-{{film_enabled}}}
+PROPRIO_ENABLED=${PROPRIO_ENABLED:-{{proprio_enabled}}}
+MULTI_IMAGE_ENABLED=${MULTI_IMAGE_ENABLED:-{{multi_image_enabled}}}
+
+# デフォルト値（テンプレートプレースホルダが未置換の場合）
+BATCH_SIZE=${BATCH_SIZE:-4}
+LEARNING_RATE=${LEARNING_RATE:-5e-5}
+MAX_STEPS=${MAX_STEPS:-10000}
+SAVE_INTERVAL=${SAVE_INTERVAL:-500}
+EVAL_INTERVAL=${EVAL_INTERVAL:-100}
+ACTION_HORIZON=${ACTION_HORIZON:-8}
+FILM_ENABLED=${FILM_ENABLED:-true}
+PROPRIO_ENABLED=${PROPRIO_ENABLED:-true}
+MULTI_IMAGE_ENABLED=${MULTI_IMAGE_ENABLED:-false}
+
+echo ""
+echo "=== Configuration ==="
+echo "DATA_ROOT: ${DATA_ROOT}"
+echo "OUTPUT_DIR: ${OUTPUT_DIR}"
+echo "BATCH_SIZE: ${BATCH_SIZE}"
+echo "LEARNING_RATE: ${LEARNING_RATE}"
+echo "MAX_STEPS: ${MAX_STEPS}"
+echo "ACTION_HORIZON: ${ACTION_HORIZON}"
+echo "FILM_ENABLED: ${FILM_ENABLED}"
+echo "PROPRIO_ENABLED: ${PROPRIO_ENABLED}"
+echo "MULTI_IMAGE_ENABLED: ${MULTI_IMAGE_ENABLED}"
+echo ""
+
+# =============================================================================
+# OpenVLA-OFT Training
+# =============================================================================
+echo "=========================================="
+echo "OpenVLA-OFT Training"
+echo "=========================================="
+
+# GPUメモリ情報を表示
+nvidia-smi || true
+
+echo ""
+echo "Starting OpenVLA-OFT training..."
+echo "  Batch size: ${BATCH_SIZE}"
+echo "  Learning rate: ${LEARNING_RATE}"
+echo "  Max steps: ${MAX_STEPS}"
+echo "  Action horizon: ${ACTION_HORIZON}"
+echo "  Save interval: ${SAVE_INTERVAL}"
+echo "  Eval interval: ${EVAL_INTERVAL}"
+echo ""
+
+# OpenVLA-OFTトレーニングを実行
+python -m crane_x7_vla.training.cli train openvla-oft \
+    --data-root "${DATA_ROOT}" \
+    --output-dir "${OUTPUT_DIR}/checkpoints" \
+    --experiment-name "crane_x7_openvla_oft" \
+    --batch-size "${BATCH_SIZE}" \
+    --learning-rate "${LEARNING_RATE}" \
+    --max-steps "${MAX_STEPS}" \
+    --action-horizon "${ACTION_HORIZON}" \
+    --film-enabled "${FILM_ENABLED}" \
+    --proprio-enabled "${PROPRIO_ENABLED}" \
+    --multi-image-enabled "${MULTI_IMAGE_ENABLED}"
+
+TRAIN_EXIT_CODE=$?
+
+# =============================================================================
+# Summary
+# =============================================================================
+echo ""
+echo "=========================================="
+echo "Training Completed"
+echo "=========================================="
+echo "Exit code: ${TRAIN_EXIT_CODE}"
+echo "End time: $(date)"
+echo ""
+echo "Outputs:"
+echo "  Checkpoints: ${OUTPUT_DIR}/checkpoints"
+echo "=========================================="
+
+exit ${TRAIN_EXIT_CODE}

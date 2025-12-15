@@ -88,7 +88,11 @@ def _compute_gae_torch(
     dtype = rewards.dtype
 
     advantages = torch.zeros_like(rewards)
-    last_gae = torch.zeros(rewards.shape[1:], device=device, dtype=dtype) if rewards.dim() > 1 else torch.tensor(0.0, device=device, dtype=dtype)
+    last_gae = (
+        torch.zeros(rewards.shape[1:], device=device, dtype=dtype)
+        if rewards.dim() > 1
+        else torch.tensor(0.0, device=device, dtype=dtype)
+    )
 
     if not isinstance(next_value, torch.Tensor):
         next_value = torch.tensor(next_value, device=device, dtype=dtype)
@@ -133,7 +137,11 @@ def compute_returns(
 
     if use_torch:
         returns = torch.zeros_like(rewards)
-        running_return = next_value if isinstance(next_value, torch.Tensor) else torch.tensor(next_value, device=rewards.device, dtype=rewards.dtype)
+        running_return = (
+            next_value
+            if isinstance(next_value, torch.Tensor)
+            else torch.tensor(next_value, device=rewards.device, dtype=rewards.dtype)
+        )
     else:
         returns = np.zeros_like(rewards, dtype=np.float32)
         running_return = float(next_value)

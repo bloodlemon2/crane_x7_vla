@@ -10,8 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from environment import environment
-from robot.crane_x7 import CraneX7
+from robot.crane_x7 import CraneX7  # noqa: E402
 
 CraneX7.mjcf_path = str((PROJECT_ROOT / "robot" / "crane_x7.xml").resolve())
 

@@ -94,14 +94,8 @@ LIFT_RENDER_MODE=rgb_array
 ```bash
 cd vla
 
-# OpenVLA用Dockerイメージビルド
-docker build -f Dockerfile.openvla -t crane_x7_vla_openvla .
-
-# MiniVLA用Dockerイメージビルド（軽量版、~1Bパラメータ）
-docker build -f Dockerfile.minivla -t crane_x7_vla_minivla .
-
-# OpenPI用Dockerイメージビルド
-docker build -f Dockerfile.openpi -t crane_x7_vla_openpi .
+# Dockerイメージビルド（全バックエンド含む）
+docker build -t crane_x7_vla .
 
 # トレーニング実行（コンテナ内）
 python -m crane_x7_vla.training.cli train openvla \
@@ -120,9 +114,30 @@ python -m crane_x7_vla.training.cli train minivla \
 # マルチGPU
 torchrun --nproc_per_node=2 -m crane_x7_vla.training.cli train openvla ...
 
+# Pi0トレーニング（PaliGemma + Expert Gemma）
+python -m crane_x7_vla.training.cli train pi0 \
+  --data-root /workspace/data/tfrecord_logs \
+  --experiment-name crane_x7_pi0
+
+# Pi0.5トレーニング（adaRMSNorm + Discrete State）
+python -m crane_x7_vla.training.cli train pi0.5 \
+  --data-root /workspace/data/tfrecord_logs \
+  --experiment-name crane_x7_pi05
+
 # 設定ファイル生成
 python -m crane_x7_vla.training.cli config --backend openvla --output my_config.yaml
 python -m crane_x7_vla.training.cli config --backend minivla --output minivla_config.yaml
+python -m crane_x7_vla.training.cli config --backend pi0 --output pi0_config.yaml
+python -m crane_x7_vla.training.cli config --backend pi0.5 --output pi05_config.yaml
+
+# W&B Sweepエージェント（ハイパーパラメータチューニング）
+python -m crane_x7_vla.training.cli agent pi0.5 \
+  --sweep-id <SWEEP_ID> \
+  --entity <WANDB_ENTITY> \
+  --project <WANDB_PROJECT> \
+  --data-root /workspace/data/tfrecord_logs \
+  --output-dir /workspace/outputs/checkpoints \
+  --max-steps 10000
 
 # LoRAマージ
 python -m crane_x7_vla.scripts.merge_lora \
@@ -159,17 +174,28 @@ python -m crane_x7_vla_rl.training.cli evaluate \
 python -m crane_x7_vla_rl.training.cli config --output my_config.yaml
 ```
 
-### Slurmクラスター
+### Slurmクラスター (lifter)
 
 ```bash
-cd slurm
+cd lifter
 pip install -e .
 
 # ジョブ投下
-slurm-submit submit jobs/train.sh
+lifter submit jobs/train.sh
 
-# W&B Sweep
-slurm-submit sweep start examples/sweeps/sweep_openvla.yaml --max-runs 10
+# W&B Sweep（リモートSlurmクラスター）
+lifter sweep start examples/sweeps/sweep_openvla.yaml --max-runs 10
+
+# W&B Sweep（ローカル実行）
+lifter sweep start examples/sweeps/sweep_openvla.yaml \
+  --local \
+  --template examples/templates_local/openvla_sweep.sh \
+  --max-runs 5
+
+# ローカルSweep再開
+lifter sweep resume <SWEEP_ID> \
+  --local \
+  --template examples/templates_local/openvla_sweep.sh
 ```
 
 ### LeRobot統合
@@ -227,9 +253,7 @@ crane_x7_vla/
 │       ├── crane_x7_lift/         # 統一シミュレータROS 2インターフェース
 │       └── crane_x7_bringup/      # 統合launchファイル
 ├── vla/                           # VLAファインチューニング
-│   ├── Dockerfile.openvla         # OpenVLA用Docker
-│   ├── Dockerfile.minivla         # MiniVLA用Docker
-│   ├── Dockerfile.openpi          # OpenPI用Docker
+│   ├── Dockerfile                 # 統一Dockerfile（VLA_BACKENDで切り替え）
 │   ├── configs/                   # 設定ファイル
 │   └── src/
 │       ├── crane_x7_vla/          # 統一トレーニングCLI
@@ -258,8 +282,8 @@ crane_x7_vla/
 │   ├── lerobot_robot_crane_x7/    # Robotプラグイン
 │   ├── lerobot_teleoperator_crane_x7/  # Teleoperatorプラグイン
 │   └── configs/                   # ポリシー設定（ACT, Diffusion）
-├── slurm/                         # Slurmジョブ投下ツール
-│   └── src/slurm_submit/
+├── lifter/                        # Slurmジョブ投下ツール
+│   └── src/lifter/
 ├── data/                          # データ保存
 │   └── tfrecord_logs/             # 収集エピソード
 └── scripts/                       # ユーティリティ
@@ -269,13 +293,16 @@ crane_x7_vla/
 
 ### VLAバックエンド比較
 
-各VLAバックエンドは依存関係が異なるため、**別々のDockerイメージ**を使用：
+統一Dockerfile（`vla/Dockerfile`）に全バックエンドの依存関係を含む：
 
-| バックエンド | Dockerfile             | Python | PyTorch | パラメータ | 特徴                          | 状態     |
-| ------------ | ---------------------- | ------ | ------- | ---------- | ----------------------------- | -------- |
-| OpenVLA      | `Dockerfile.openvla`   | 3.10   | 2.5.1   | ~7B        | Prismatic VLMベース           | 実装済み |
-| MiniVLA      | `Dockerfile.minivla`   | 3.10   | 2.5.1   | ~1B        | Qwen 2.5 + VQ Action Chunking | 実装済み |
-| OpenPI       | `Dockerfile.openpi`    | 3.11   | 2.7.1   | -          | π₀モデル（JAX版）             | 未実装   |
+| バックエンド | パラメータ | 特徴 | 状態 |
+|-------------|-----------|------|------|
+| OpenVLA | ~7B | Prismatic VLMベース | 実装済み |
+| MiniVLA | ~1B | Qwen 2.5 + VQ Action Chunking | 実装済み |
+| Pi0 | ~2.3B | PaliGemma + Expert Gemma + Flow Matching | 実装済み |
+| Pi0.5 | ~2.3B | Pi0 + adaRMSNorm + Discrete State | 実装済み |
+
+共通環境: **CUDA 12.6** / **Python 3.11** / **PyTorch 2.9.1**
 
 ### データフォーマット
 
@@ -343,7 +370,7 @@ ros2 launch crane_x7_bringup data_collection.launch.py  # カメラ+ロガー（
 - [docs/vla-rl.md](docs/vla-rl.md) - VLA強化学習（SimpleVLA-RL方式）
 - [docs/remote.md](docs/remote.md) - リモートGPU推論・VLA-RLトレーニング（Vast.ai、Runpod）
 - [docs/sim.md](docs/sim.md) - Liftシミュレータ抽象化
-- [docs/slurm.md](docs/slurm.md) - Slurmジョブ投下ツール
+- [docs/lifter.md](docs/lifter.md) - lifter (Slurmジョブ投下ツール)
 - [docs/lerobot.md](docs/lerobot.md) - LeRobot統合
 - [docs/gemini.md](docs/gemini.md) - Gemini API統合
 

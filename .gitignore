@@ -1,6 +1,7 @@
 .env
 
 /data
+/outputs
 
 /.cache
 
@@ -9,4 +10,3 @@ __pycache__
 # OS
 .DS_Store
 Thumbs.db
-

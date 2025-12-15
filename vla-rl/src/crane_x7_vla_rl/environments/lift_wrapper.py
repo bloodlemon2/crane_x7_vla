@@ -137,7 +137,9 @@ class LiftRolloutEnvironment:
         self._episode_reward = 0.0
         return self._convert_observation(obs), info
 
-    def step(self, action: np.ndarray) -> tuple[VLARLObservation, float, bool, bool, dict[str, Any]]:
+    def step(
+        self, action: np.ndarray
+    ) -> tuple[VLARLObservation, float, bool, bool, dict[str, Any]]:
         """Execute one step in the environment.
 
         Args:
@@ -210,7 +212,9 @@ class LiftRolloutEnvironment:
             # Add weighted dense reward from simulator
             dense_reward = result.reward
             if isinstance(dense_reward, np.ndarray):
-                dense_reward = dense_reward.item() if dense_reward.size == 1 else dense_reward[0]
+                dense_reward = (
+                    dense_reward.item() if dense_reward.size == 1 else dense_reward[0]
+                )
             reward += self.dense_reward_weight * dense_reward
 
         return reward
