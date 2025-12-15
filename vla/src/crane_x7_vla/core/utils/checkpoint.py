@@ -13,7 +13,7 @@ from crane_x7_vla.data_types import CheckpointInfo
 
 logger = get_logger(__name__)
 
-BackendType = Literal["openvla", "openpi", "openpi-pytorch"]
+BackendType = Literal["openvla", "openpi"]
 
 
 def detect_backend(path: Path) -> BackendType | None:
@@ -37,10 +37,6 @@ def detect_backend(path: Path) -> BackendType | None:
     # OpenPI JAX: Has 'params' directory or 'train_state.msgpack'
     if (path / "params").exists() or (path / "train_state.msgpack").exists():
         return "openpi"
-
-    # OpenPI PyTorch: Has checkpoint.pt
-    if (path / "checkpoint.pt").exists():
-        return "openpi-pytorch"
 
     # OpenVLA full model: Has model.safetensors or pytorch_model.bin
     if (path / "model.safetensors").exists() or (path / "pytorch_model.bin").exists():
@@ -71,10 +67,7 @@ def validate_checkpoint(path: Path | str) -> CheckpointInfo:
     # Detect backend
     backend = detect_backend(path)
     if backend is None:
-        raise ValueError(
-            f"Cannot determine checkpoint format: {path}. "
-            "Expected OpenVLA, OpenPI (JAX), or OpenPI (PyTorch) format."
-        )
+        raise ValueError(f"Cannot determine checkpoint format: {path}. " "Expected OpenVLA or OpenPI format.")
 
     # Check for config
     has_config = (path / "config.json").exists() or (path / "trainer_config.json").exists()
@@ -85,9 +78,6 @@ def validate_checkpoint(path: Path | str) -> CheckpointInfo:
         has_optimizer_state = (path / "optimizer.pt").exists()
     elif backend == "openpi":
         has_optimizer_state = (path / "opt_state.msgpack").exists()
-    elif backend == "openpi-pytorch":
-        # Optimizer state is inside checkpoint.pt
-        has_optimizer_state = True
 
     # Extract step number from directory name or config
     step = _extract_step(path, backend)
@@ -148,10 +138,6 @@ def _validate_checkpoint_contents(path: Path, backend: BackendType) -> bool:
     elif backend == "openpi":
         # OpenPI JAX needs params
         return (path / "params").exists() or (path / "train_state.msgpack").exists()
-
-    elif backend == "openpi-pytorch":
-        # OpenPI PyTorch needs checkpoint.pt
-        return (path / "checkpoint.pt").exists()
 
     return False
 

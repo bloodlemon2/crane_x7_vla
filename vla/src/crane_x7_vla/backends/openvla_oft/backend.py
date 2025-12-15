@@ -29,9 +29,6 @@ import tqdm
 import wandb
 from accelerate import PartialState
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig as HFOpenVLAConfig
-from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
-from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder, VicunaV15ChatPromptBuilder
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -47,10 +44,23 @@ from crane_x7_vla.backends.openvla_oft.components import (
     ProprioProjector,
 )
 from crane_x7_vla.backends.openvla_oft.config import OpenVLAOFTConfig
+from crane_x7_vla.backends.openvla_oft.constants import ACTION_DIM, NUM_ACTIONS_CHUNK
 from crane_x7_vla.backends.openvla_oft.dataset import (
     CraneX7OFTDataset,
     OpenVLAOFTBatchTransform,
     PaddedCollatorForOFT,
+)
+from crane_x7_vla.backends.openvla_oft.hf import (
+    OpenVLAConfig as HFOpenVLAConfig,
+)
+from crane_x7_vla.backends.openvla_oft.hf import (
+    OpenVLAForActionPrediction,
+    PrismaticImageProcessor,
+    PrismaticProcessor,
+)
+from crane_x7_vla.backends.openvla_oft.train_utils import (
+    get_current_action_mask,
+    get_next_actions_mask,
 )
 from crane_x7_vla.core.base import VLABackend
 from crane_x7_vla.core.utils.logging import get_logger
@@ -462,6 +472,7 @@ class OpenVLAOFTTrainer:
         recent_losses = deque(maxlen=self.cfg.grad_accumulation_steps)
         recent_l1_losses = deque(maxlen=self.cfg.grad_accumulation_steps)
         recent_curr_action_l1 = deque(maxlen=self.cfg.grad_accumulation_steps)
+        recent_next_actions_l1 = deque(maxlen=self.cfg.grad_accumulation_steps)
 
         # Training loop
         logger.info("Starting training...")
@@ -494,6 +505,7 @@ class OpenVLAOFTTrainer:
                 recent_losses.append(loss.item())
                 recent_l1_losses.append(metrics["l1_loss"])
                 recent_curr_action_l1.append(metrics["curr_action_l1"])
+                recent_next_actions_l1.append(metrics["next_actions_l1"])
 
                 gradient_step_idx = batch_idx // self.cfg.grad_accumulation_steps
 
@@ -501,6 +513,7 @@ class OpenVLAOFTTrainer:
                 smoothed_loss = sum(recent_losses) / len(recent_losses)
                 smoothed_l1 = sum(recent_l1_losses) / len(recent_l1_losses)
                 smoothed_curr_l1 = sum(recent_curr_action_l1) / len(recent_curr_action_l1)
+                smoothed_next_l1 = sum(recent_next_actions_l1) / len(recent_next_actions_l1)
 
                 # Log to W&B
                 if distributed_state.is_main_process and gradient_step_idx % 10 == 0:
@@ -509,6 +522,7 @@ class OpenVLAOFTTrainer:
                             "train/loss": smoothed_loss,
                             "train/l1_loss": smoothed_l1,
                             "train/curr_action_l1": smoothed_curr_l1,
+                            "train/next_actions_l1": smoothed_next_l1,
                             "train/lr": scheduler.get_last_lr()[0],
                         },
                         step=gradient_step_idx,
@@ -550,6 +564,7 @@ class OpenVLAOFTTrainer:
                                     "eval/loss": overfit_metrics["loss"],
                                     "eval/l1_loss": overfit_metrics["l1_loss"],
                                     "eval/curr_action_l1": overfit_metrics["curr_action_l1"],
+                                    "eval/next_actions_l1": overfit_metrics["next_actions_l1"],
                                 },
                                 step=gradient_step_idx,
                             )
@@ -591,16 +606,23 @@ class OpenVLAOFTTrainer:
         use_film: bool,
         use_proprio: bool,
     ) -> tuple:
-        """Run forward pass and compute L1 loss."""
+        """Run forward pass and compute L1 loss.
+
+        This method follows the official OpenVLA-OFT implementation:
+        1. Pass proprio and use_film to VLA forward
+        2. Use action masks to correctly extract hidden states for action tokens
+        3. Compute L1 loss on predicted vs ground truth actions
+        """
         # Get ground truth actions
         gt_actions = batch["actions"].to(device_id).to(torch.bfloat16)
+        batch_size = batch["input_ids"].shape[0]
 
-        # Prepare proprio embedding if enabled (currently logged but not used in forward pass)
-        if use_proprio and proprio_projector is not None and "proprio" in batch:
+        # Prepare proprio for VLA forward pass
+        proprio = None
+        if use_proprio and "proprio" in batch:
             proprio = batch["proprio"].to(device_id).to(torch.bfloat16)
-            _ = proprio_projector(proprio)  # proprio_embedding (for future use)
 
-        # VLA forward pass
+        # VLA forward pass with proprio, proprio_projector, and use_film
         with torch.autocast("cuda", dtype=torch.bfloat16):
             output: CausalLMOutputWithPast = vla(
                 input_ids=batch["input_ids"].to(device_id),
@@ -608,37 +630,30 @@ class OpenVLAOFTTrainer:
                 pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
                 labels=batch["labels"],
                 output_hidden_states=True,
+                proprio=proprio,
+                proprio_projector=proprio_projector,
+                use_film=use_film,
             )
 
         # Get last hidden states
         last_hidden_states = output.hidden_states[-1]  # (B, seq_len, D)
 
-        # Extract hidden states for action tokens
-        # We need to identify which positions correspond to actions
-        # In OFT, we use the hidden states after the vision patches
-        action_horizon = self.cfg.action_horizon
-        action_dim = self.cfg.action_dim
+        # Compute action masks from ground truth labels
+        # Labels are shifted by 1 relative to input_ids
+        ground_truth_token_ids = batch["labels"][:, 1:].to(device_id)
+        current_action_mask = get_current_action_mask(ground_truth_token_ids)
+        next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
 
-        # Get text hidden states (after vision patches)
-        text_hidden_states = last_hidden_states[:, num_patches:]
+        # Get hidden states for text portion of prompt+response (after vision patches)
+        # Note: Use -1 to exclude the last token (EOS)
+        text_hidden_states = last_hidden_states[:, num_patches:-1]
 
-        # For OFT, we take the first action_horizon * action_dim tokens after the prompt
-        # as the action representation
-        num_action_tokens = action_horizon * action_dim
-        if text_hidden_states.shape[1] >= num_action_tokens:
-            actions_hidden_states = text_hidden_states[:, :num_action_tokens]
-        else:
-            # Pad if not enough tokens
-            pad_size = num_action_tokens - text_hidden_states.shape[1]
-            actions_hidden_states = torch.cat(
-                [
-                    text_hidden_states,
-                    text_hidden_states[:, -1:].expand(-1, pad_size, -1),
-                ],
-                dim=1,
-            )
-
-        actions_hidden_states = actions_hidden_states.to(torch.bfloat16)
+        # Get hidden states for action portion of response using action masks
+        # The masks select positions corresponding to action tokens
+        combined_mask = current_action_mask | next_actions_mask
+        actions_hidden_states = (
+            text_hidden_states[combined_mask].reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1).to(torch.bfloat16)
+        )  # (B, act_chunk_len, D)
 
         # Predict actions through action head
         # Get the module if wrapped in DDP
@@ -655,12 +670,19 @@ class OpenVLAOFTTrainer:
             # Current action (first timestep) L1
             curr_action_l1 = torch.nn.L1Loss()(predicted_actions[:, 0], gt_actions[:, 0]).item()
 
+            # Next actions L1
+            if predicted_actions.shape[1] > 1:
+                next_actions_l1 = torch.nn.L1Loss()(predicted_actions[:, 1:], gt_actions[:, 1:]).item()
+            else:
+                next_actions_l1 = 0.0
+
             # Full chunk L1
             l1_loss = loss.item()
 
         metrics = {
             "l1_loss": l1_loss,
             "curr_action_l1": curr_action_l1,
+            "next_actions_l1": next_actions_l1,
         }
 
         return loss, metrics
@@ -684,6 +706,7 @@ class OpenVLAOFTTrainer:
         losses = []
         l1_losses = []
         curr_action_l1s = []
+        next_actions_l1s = []
 
         with torch.no_grad():
             for i, batch in enumerate(overfit_dataloader):
@@ -704,11 +727,13 @@ class OpenVLAOFTTrainer:
                 losses.append(loss.item())
                 l1_losses.append(metrics["l1_loss"])
                 curr_action_l1s.append(metrics["curr_action_l1"])
+                next_actions_l1s.append(metrics["next_actions_l1"])
 
         return {
             "loss": sum(losses) / len(losses) if losses else 0.0,
             "l1_loss": sum(l1_losses) / len(l1_losses) if l1_losses else 0.0,
             "curr_action_l1": sum(curr_action_l1s) / len(curr_action_l1s) if curr_action_l1s else 0.0,
+            "next_actions_l1": sum(next_actions_l1s) / len(next_actions_l1s) if next_actions_l1s else 0.0,
         }
 
     def _save_checkpoint(

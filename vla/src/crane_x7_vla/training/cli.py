@@ -37,10 +37,6 @@ def _get_backend_configs(backend: str) -> tuple[Any, ...]:
         from crane_x7_vla.backends.openvla.config import OpenVLAConfig, OpenVLASpecificConfig
 
         return (OpenVLAConfig, OpenVLASpecificConfig)
-    elif backend == "openpi-pytorch":
-        from crane_x7_vla.backends.openpi_pytorch.config import OpenPIPytorchConfig, OpenPIPytorchSpecificConfig
-
-        return (OpenPIPytorchConfig, OpenPIPytorchSpecificConfig)
     elif backend == "minivla":
         from crane_x7_vla.backends.minivla.config import MiniVLAConfig, MiniVLASpecificConfig
 
@@ -49,6 +45,10 @@ def _get_backend_configs(backend: str) -> tuple[Any, ...]:
         from crane_x7_vla.backends.openvla_oft.config import OpenVLAOFTConfig, OpenVLAOFTSpecificConfig
 
         return (OpenVLAOFTConfig, OpenVLAOFTSpecificConfig)
+    elif backend in ("pi0", "pi0.5"):
+        from crane_x7_vla.backends.pi0.config import Pi0Config, Pi0SpecificConfig
+
+        return (Pi0Config, Pi0SpecificConfig)
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
@@ -93,15 +93,6 @@ def create_default_config(backend: str, data_root: Path, output_dir: Path, exper
             experiment_name=experiment_name,
             openvla=BackendSpecificConfig(),
         )
-    elif backend == "openpi-pytorch":
-        return BackendConfig(
-            backend=backend,
-            data=data_config,
-            training=training_config,
-            output_dir=output_dir,
-            experiment_name=experiment_name,
-            openpi_pytorch=BackendSpecificConfig(),
-        )
     elif backend == "minivla":
         return BackendConfig(
             backend=backend,
@@ -119,6 +110,15 @@ def create_default_config(backend: str, data_root: Path, output_dir: Path, exper
             output_dir=output_dir,
             experiment_name=experiment_name,
             openvla_oft=BackendSpecificConfig(),
+        )
+    elif backend in ("pi0", "pi0.5"):
+        return BackendConfig(
+            backend=backend,
+            data=data_config,
+            training=training_config,
+            output_dir=output_dir,
+            experiment_name=experiment_name,
+            pi0=BackendSpecificConfig(model_type=backend),
         )
     else:
         raise ValueError(f"Unknown backend: {backend}")
@@ -260,7 +260,7 @@ Examples:
     train_subparsers = train_parser.add_subparsers(dest="backend", help="VLA backend to use")
 
     # Define available backends
-    backends = ["openvla", "openpi-pytorch", "minivla", "openvla-oft"]
+    backends = ["openvla", "minivla", "openvla-oft", "pi0", "pi0.5"]
 
     for backend in backends:
         backend_parser = train_subparsers.add_parser(

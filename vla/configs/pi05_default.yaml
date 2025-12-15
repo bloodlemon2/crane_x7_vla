@@ -1,0 +1,94 @@
+# Pi0.5 Configuration for CRANE-X7
+# Uses PaliGemma + Expert Gemma architecture with flow matching
+#
+# Pi0.5 key features:
+# - Discrete state tokens (part of language tokens)
+# - adaRMSNorm for timestep injection in action expert
+# - Longer max_token_len (200 vs 48 in Pi0)
+
+# Base settings
+backend: pi0.5
+experiment_name: crane_x7_pi05
+
+# Data configuration
+data:
+  data_root: /workspace/data/tfrecord_logs
+  format: tfrecord
+
+# Training configuration
+training:
+  batch_size: 4  # Lower batch size due to increased memory from longer tokens
+  max_steps: 100000
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  warmup_steps: 1000
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 8  # Higher accumulation for effective batch size
+  gradient_checkpointing: true
+  save_interval: 5000
+  log_interval: 10
+
+# Overfitting detection
+overfitting:
+  overfit_split_ratio: 0.1
+  overfit_check_interval: 500
+  overfit_check_steps: 50
+
+# W&B logging
+wandb_project: crane-x7-pi05
+wandb_entity: null
+
+# Pi0.5-specific configuration
+pi0:
+  # Model type: 'pi0.5' enables adaRMSNorm and discrete state
+  model_type: pi0.5
+
+  # Model architecture
+  paligemma_variant: gemma_2b  # VLM backbone
+  action_expert_variant: gemma_300m  # Action expert with adaRMSNorm
+  pretrained_checkpoint: null
+
+  # Action configuration
+  action_dim: 32
+  state_dim: 32
+  action_horizon: 50
+
+  # Token configuration (Pi0.5 uses longer tokens)
+  max_token_len: 200  # Longer for discrete state tokens
+  discrete_state_input: true  # State is part of discrete tokens
+
+  # Image configuration
+  image_size:
+    - 224
+    - 224
+  num_cameras: 1
+  camera_names:
+    - base_0_rgb
+
+  # Flow matching
+  num_denoise_steps: 10
+
+  # Normalization
+  normalize_actions: true
+  normalization_mode: quantile
+  quantile_low: 0.01
+  quantile_high: 0.99
+
+  # LoRA (optional)
+  use_lora: false
+  lora_rank: 32
+  lora_alpha: 16
+  lora_dropout: 0.1
+
+  # Freeze settings
+  freeze_vlm: true
+  freeze_action_expert: false
+
+  # Precision
+  precision: bfloat16
+
+  # Default prompt
+  default_prompt: "manipulate objects"
+
+  # Delta actions
+  use_delta_actions: false

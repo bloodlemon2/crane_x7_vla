@@ -83,7 +83,7 @@ class CheckpointInfo:
     path: Path
     """Path to checkpoint directory"""
 
-    backend: Literal["openvla", "openpi", "openpi-pytorch"]
+    backend: Literal["openvla", "openpi"]
     """Backend type that created this checkpoint"""
 
     step: int

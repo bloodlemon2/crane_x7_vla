@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025 nop
 #
 # Unified VLA Dockerfile for CRANE-X7
-# All backends included: openvla, minivla, openpi-pytorch
+# All backends included: openvla, minivla, pi0, pi0.5
 #
 # Usage:
 #   docker build -t crane_x7_vla .
@@ -83,7 +83,7 @@ RUN python3 -m pip install -r /build/requirements-base.txt
 # Backend-specific requirements
 RUN python3 -m pip install -r /build/requirements-openvla.txt && \
     python3 -m pip install -r /build/requirements-minivla.txt && \
-    python3 -m pip install -r /build/requirements-openpi-pytorch.txt
+    python3 -m pip install -r /build/requirements-pi0.txt
 
 # Install dlimp without dependencies (avoids tensorflow version conflict)
 RUN python3 -m pip install --no-deps "dlimp @ git+https://github.com/moojink/dlimp_openvla"

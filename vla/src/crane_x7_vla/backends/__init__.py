@@ -9,7 +9,7 @@ from crane_x7_vla.core.base import VLABackend
 
 
 # Type alias for backend names
-BackendType = Literal["openvla", "openvla-oft", "openpi-pytorch", "minivla"]
+BackendType = Literal["openvla", "openvla-oft", "minivla", "pi0", "pi0.5"]
 
 
 def get_backend(backend_type: BackendType) -> type[VLABackend]:
@@ -20,7 +20,7 @@ def get_backend(backend_type: BackendType) -> type[VLABackend]:
     needed, avoiding dependency issues when not all backends are installed.
 
     Args:
-        backend_type: Name of the backend ("openvla", "openpi", "openpi-pytorch")
+        backend_type: Name of the backend ("openvla", "minivla", "pi0", "pi0.5", etc.)
 
     Returns:
         Backend class (not instantiated)
@@ -33,6 +33,10 @@ def get_backend(backend_type: BackendType) -> type[VLABackend]:
         >>> BackendClass = get_backend("openvla")
         >>> backend = BackendClass(config)
         >>> backend.train()
+
+        >>> # Pi0 and Pi0.5 use the same backend class
+        >>> BackendClass = get_backend("pi0")
+        >>> backend = BackendClass(config)
     """
     if backend_type == "openvla":
         from crane_x7_vla.backends.openvla import OpenVLABackend
@@ -42,17 +46,17 @@ def get_backend(backend_type: BackendType) -> type[VLABackend]:
         from crane_x7_vla.backends.openvla_oft import OpenVLAOFTBackend
 
         return OpenVLAOFTBackend
-    elif backend_type == "openpi-pytorch":
-        from crane_x7_vla.backends.openpi_pytorch import OpenPIPytorchBackend
-
-        return OpenPIPytorchBackend
     elif backend_type == "minivla":
         from crane_x7_vla.backends.minivla import MiniVLABackend
 
         return MiniVLABackend
+    elif backend_type in ("pi0", "pi0.5"):
+        from crane_x7_vla.backends.pi0 import Pi0Backend
+
+        return Pi0Backend
     else:
         raise ValueError(
-            f"Unknown backend: {backend_type}. " f"Available backends: openvla, openvla-oft, openpi-pytorch, minivla"
+            f"Unknown backend: {backend_type}. " f"Available backends: openvla, openvla-oft, minivla, pi0, pi0.5"
         )
 
 

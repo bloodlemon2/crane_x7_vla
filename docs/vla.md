@@ -11,7 +11,8 @@ CRANE-X7ロボットアーム用のVision-Language-Action（VLA）モデルを�
 | **OpenVLA** | Prismatic VLMベースの7Bパラメータモデル | ~7B | ~5Hz | 実装済み |
 | **OpenVLA-OFT** | L1 Regression + Action Chunking + FiLM | ~7B | ~8Hz | 実装済み |
 | **MiniVLA** | Qwen 2.5 0.5B + VQ Action Chunking | ~1B | ~12.5Hz | 実装済み |
-| **OpenPI PyTorch** | HuggingFace Pi0 + Flow Matching | - | - | 実装済み |
+| **Pi0** | PaliGemma + Expert Gemma + Flow Matching | ~2.3B | ~3Hz | 実装済み |
+| **Pi0.5** | Pi0 + adaRMSNorm + Discrete State | ~2.3B | ~3Hz | 実装済み |
 
 すべてのバックエンドは統一Dockerfile（`vla/Dockerfile`）に含まれています。
 
@@ -34,14 +35,23 @@ MiniVLAは軽量で高速な推論を実現するVLAモデルです：
 - **VQ Action Chunking**: 複数の将来アクションを効率的に予測
 - **Multi-image Support**: 画像履歴 + 手首カメラ入力に対応
 
-### OpenPI PyTorchの特徴
+### Pi0/Pi0.5の特徴
 
-Physical Intelligence社のπ₀モデルをPyTorchで実装：
+OpenPIのPyTorch実装に基づくPi0/Pi0.5モデル：
 
+- **PaliGemma + Expert Gemma**: VLMとアクション専門家の組み合わせアーキテクチャ
 - **Flow Matching**: 拡散モデルベースのアクション生成
 - **50-step Action Chunking**: 長期アクション予測
-- **マルチカメラ入力**: 3カメラ（base, left_wrist, right_wrist）対応
-- **HuggingFace統合**: `lerobot/pi0_base`から初期化
+- **マルチカメラサポート**: 最大3カメラ入力に対応
+
+**Pi0 vs Pi0.5の違い:**
+
+| 特徴 | Pi0 | Pi0.5 |
+|------|-----|-------|
+| State入力 | 連続（MLPで処理） | 離散（言語トークンに含む） |
+| Timestep注入 | MLP | adaRMSNorm |
+| max_token_len | 48 | 200 |
+| メモリ使用量 | 低 | 高 |
 
 ## クイックスタート
 
@@ -78,10 +88,15 @@ python -m crane_x7_vla.training.cli train minivla \
   --data-root /workspace/data/tfrecord_logs \
   --experiment-name crane_x7_minivla
 
-# OpenPI PyTorch（Flow Matching）
-python -m crane_x7_vla.training.cli train openpi-pytorch \
+# Pi0（PaliGemma + Expert Gemma）
+python -m crane_x7_vla.training.cli train pi0 \
   --data-root /workspace/data/tfrecord_logs \
-  --experiment-name crane_x7_openpi
+  --experiment-name crane_x7_pi0
+
+# Pi0.5（adaRMSNorm + Discrete State）
+python -m crane_x7_vla.training.cli train pi0.5 \
+  --data-root /workspace/data/tfrecord_logs \
+  --experiment-name crane_x7_pi05
 ```
 
 ## 環境構築
@@ -185,7 +200,8 @@ python -m crane_x7_vla.training.cli train openvla \
 | `openvla` | 標準OpenVLA（トークン化アクション） |
 | `openvla-oft` | OpenVLA-OFT（L1 Regression + Action Chunking） |
 | `minivla` | MiniVLA（軽量 + VQ Action Chunking） |
-| `openpi-pytorch` | OpenPI PyTorch（Flow Matching） |
+| `pi0` | Pi0（PaliGemma + Expert Gemma + Flow Matching） |
+| `pi0.5` | Pi0.5（adaRMSNorm + Discrete State入力） |
 
 ### CLI引数一覧
 
@@ -228,10 +244,15 @@ python -m crane_x7_vla.training.cli config \
   --backend minivla \
   --output minivla_config.yaml
 
-# OpenPI PyTorch設定
+# Pi0設定
 python -m crane_x7_vla.training.cli config \
-  --backend openpi-pytorch \
-  --output openpi_config.yaml
+  --backend pi0 \
+  --output pi0_config.yaml
+
+# Pi0.5設定
+python -m crane_x7_vla.training.cli config \
+  --backend pi0.5 \
+  --output pi05_config.yaml
 ```
 
 ### マルチGPUトレーニング
@@ -303,20 +324,48 @@ torchrun --nproc_per_node=4 -m crane_x7_vla.training.cli train openvla \
 | `multi_image.image_history` | 2 | 履歴フレーム数 |
 | `multi_image.use_wrist_camera` | True | 手首カメラを使用 |
 
-### OpenPI PyTorch固有設定
+### Pi0/Pi0.5固有設定
+
+Pi0とPi0.5は同じバックエンドクラスで`model_type`設定により切り替えます。
 
 | 設定 | デフォルト | 説明 |
 |------|-----------|------|
-| `model_name` | `lerobot/pi0_base` | HuggingFaceモデルID |
-| `action_dim` | 32 | アクション次元（Pi0は32） |
+| `model_type` | `pi0` | モデルタイプ（`pi0`または`pi0.5`） |
+| `paligemma_variant` | `gemma_2b` | VLMバックボーン |
+| `action_expert_variant` | `gemma_300m` | アクション専門家モデル |
+| `pretrained_checkpoint` | `null` | 事前学習済みチェックポイント |
+| `action_dim` | 32 | アクション次元（パディング含む） |
 | `state_dim` | 32 | 状態次元 |
 | `action_horizon` | 50 | アクションチャンク長 |
-| `num_denoise_steps` | 10 | デノイズステップ数 |
-| `noise_scheduler` | `linear` | ノイズスケジューラ |
-| `normalize_actions` | True | アクション正規化 |
-| `normalization_mode` | `quantile` | 正規化モード |
-| `num_cameras` | 3 | カメラ数 |
-| `use_lora` | False | LoRA（現在未サポート） |
+| `max_token_len` | 48/200 | 最大トークン長（Pi0: 48, Pi0.5: 200） |
+| `discrete_state_input` | false/true | 離散状態入力（Pi0.5で自動true） |
+| `num_denoise_steps` | 10 | Flow Matchingデノイズステップ |
+| `normalize_actions` | true | アクション正規化 |
+| `normalization_mode` | `quantile` | 正規化モード（`quantile`/`zscore`） |
+| `quantile_low` | 0.01 | Quantile正規化下限 |
+| `quantile_high` | 0.99 | Quantile正規化上限 |
+| `freeze_vlm` | true | VLM（PaliGemma）を凍結 |
+| `freeze_action_expert` | false | アクション専門家を凍結 |
+| `precision` | `bfloat16` | 計算精度 |
+
+#### カメラ設定（Pi0/Pi0.5）
+
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `image_size` | [224, 224] | 入力画像サイズ |
+| `num_cameras` | 1 | カメラ数（最大3） |
+| `camera_names` | [base_0_rgb] | カメラ名リスト |
+
+利用可能なカメラ名: `base_0_rgb`, `left_wrist_0_rgb`, `right_wrist_0_rgb`
+
+#### LoRA設定（Pi0/Pi0.5）
+
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `use_lora` | false | LoRAを使用 |
+| `lora_rank` | 32 | LoRAランク |
+| `lora_alpha` | 16 | LoRAアルファ |
+| `lora_dropout` | 0.1 | LoRAドロップアウト |
 
 ## LoRAアダプターのマージ
 
@@ -443,11 +492,11 @@ vla/
 ├── requirements-base.txt          # 共通依存関係
 ├── requirements-openvla.txt       # OpenVLA依存関係
 ├── requirements-minivla.txt       # MiniVLA依存関係
-├── requirements-openpi-pytorch.txt # OpenPI PyTorch依存関係
 ├── configs/
 │   ├── openvla_default.yaml       # OpenVLAデフォルト設定
 │   ├── minivla_default.yaml       # MiniVLAデフォルト設定
-│   └── openpi_default.yaml        # OpenPIデフォルト設定
+│   ├── pi0_default.yaml           # Pi0デフォルト設定
+│   └── pi05_default.yaml          # Pi0.5デフォルト設定
 ├── outputs/                       # 学習出力（チェックポイント）
 ├── src/
 │   ├── crane_x7_vla/              # 統一トレーニングフレームワーク
@@ -472,10 +521,11 @@ vla/
 │   │   │   │   └── action_tokenizer/
 │   │   │   │       ├── vq.py              # Residual VQ実装
 │   │   │   │       └── vq_tokenizer.py    # VQアクショントークナイザー
-│   │   │   └── openpi_pytorch/    # OpenPI PyTorchバックエンド
-│   │   │       ├── backend.py
-│   │   │       ├── config.py
-│   │   │       └── dataset.py
+│   │   │   └── pi0/               # Pi0/Pi0.5バックエンド
+│   │   │       ├── backend.py     # Pi0Backend実装
+│   │   │       ├── config.py      # Pi0Config
+│   │   │       ├── model.py       # PaliGemmaWithExpertModel
+│   │   │       └── dataset.py     # CraneX7Pi0Dataset
 │   │   ├── core/                  # 共有コンポーネント
 │   │   │   ├── base.py            # VLABackend基底クラス
 │   │   │   ├── config/            # 設定データクラス

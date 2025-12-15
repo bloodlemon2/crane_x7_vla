@@ -114,9 +114,21 @@ python -m crane_x7_vla.training.cli train minivla \
 # マルチGPU
 torchrun --nproc_per_node=2 -m crane_x7_vla.training.cli train openvla ...
 
+# Pi0トレーニング（PaliGemma + Expert Gemma）
+python -m crane_x7_vla.training.cli train pi0 \
+  --data-root /workspace/data/tfrecord_logs \
+  --experiment-name crane_x7_pi0
+
+# Pi0.5トレーニング（adaRMSNorm + Discrete State）
+python -m crane_x7_vla.training.cli train pi0.5 \
+  --data-root /workspace/data/tfrecord_logs \
+  --experiment-name crane_x7_pi05
+
 # 設定ファイル生成
 python -m crane_x7_vla.training.cli config --backend openvla --output my_config.yaml
 python -m crane_x7_vla.training.cli config --backend minivla --output minivla_config.yaml
+python -m crane_x7_vla.training.cli config --backend pi0 --output pi0_config.yaml
+python -m crane_x7_vla.training.cli config --backend pi0.5 --output pi05_config.yaml
 
 # LoRAマージ
 python -m crane_x7_vla.scripts.merge_lora \
@@ -267,7 +279,8 @@ crane_x7_vla/
 |-------------|-----------|------|------|
 | OpenVLA | ~7B | Prismatic VLMベース | 実装済み |
 | MiniVLA | ~1B | Qwen 2.5 + VQ Action Chunking | 実装済み |
-| OpenPI-PyTorch | - | CLIP + Flow Matching (PyTorch) | 実装済み |
+| Pi0 | ~2.3B | PaliGemma + Expert Gemma + Flow Matching | 実装済み |
+| Pi0.5 | ~2.3B | Pi0 + adaRMSNorm + Discrete State | 実装済み |
 
 共通環境: **CUDA 12.6** / **Python 3.11** / **PyTorch 2.9.1**
 

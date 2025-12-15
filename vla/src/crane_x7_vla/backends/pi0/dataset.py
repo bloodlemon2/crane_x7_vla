@@ -2,14 +2,17 @@
 # SPDX-FileCopyrightText: 2025 nop
 
 """
-CRANE-X7 Dataset for OpenPI PyTorch Training.
+CRANE-X7 Dataset for Pi0/Pi0.5 Training.
 
-This dataset loader is designed for training Pi0 models with action chunks.
-It loads CRANE-X7 robot data (8 DOF) and pads to Pi0's expected format (32 DOF).
-Each sample includes an action chunk of future actions for flow matching training.
+This dataset loader is designed for training Pi0 models with:
+- Multi-camera support (base, left_wrist, right_wrist)
+- Action chunk prediction with flow matching
+- Language instruction tokenization
+- Support for both Pi0 (continuous state) and Pi0.5 (discrete state) formats
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -25,15 +28,19 @@ from crane_x7_vla.core.transforms.action_transforms import (
 )
 
 
-class CraneX7ActionChunkDataset(IterableDataset):
+logger = logging.getLogger(__name__)
+
+
+class CraneX7Pi0Dataset(IterableDataset):
     """
-    PyTorch IterableDataset for CRANE-X7 robot data with action chunks.
+    PyTorch IterableDataset for CRANE-X7 robot data with Pi0/Pi0.5 format.
 
     This dataset:
     - Loads TFRecord data in episode format
     - Pads 8 DOF actions/states to 32 DOF for Pi0 compatibility
     - Returns action chunks (50 future actions) for flow matching training
-    - Supports image augmentation and normalization
+    - Supports multi-camera views
+    - Provides tokenized language instructions
     """
 
     # TFRecord feature description for CRANE-X7 format
@@ -46,12 +53,16 @@ class CraneX7ActionChunkDataset(IterableDataset):
         "dataset_name": tf.io.FixedLenFeature([], tf.string),
     }
 
+    # Camera names following OpenPI convention
+    CAMERA_NAMES: ClassVar[list[str]] = ["base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"]
+
     def __init__(
         self,
         data_root_dir: Path,
         action_horizon: int = 50,
         source_action_dim: int = 8,
         target_action_dim: int = 32,
+        max_token_len: int = 48,
         resize_resolution: tuple[int, int] = (224, 224),
         shuffle_buffer_size: int = 10000,
         train: bool = True,
@@ -59,6 +70,8 @@ class CraneX7ActionChunkDataset(IterableDataset):
         normalize_actions: bool = True,
         normalization_mode: str = "quantile",
         default_prompt: str = "manipulate objects",
+        camera_names: list[str] | None = None,
+        discrete_state_input: bool = False,
         overfit_split_ratio: float = 0.0,
         split: str = "train",
         split_seed: int = 42,
@@ -66,13 +79,14 @@ class CraneX7ActionChunkDataset(IterableDataset):
         world_size: int = 1,
     ) -> None:
         """
-        Initialize action chunk dataset.
+        Initialize Pi0 action chunk dataset.
 
         Args:
             data_root_dir: Root directory containing TFRecord episode files
             action_horizon: Number of future actions to predict (chunk size)
             source_action_dim: Source action dimension (CRANE-X7 has 8 DOF)
             target_action_dim: Target action dimension (Pi0 uses 32)
+            max_token_len: Maximum token length for language instructions
             resize_resolution: Target image resolution (height, width)
             shuffle_buffer_size: Buffer size for shuffling episodes
             train: Whether this is training set
@@ -80,6 +94,8 @@ class CraneX7ActionChunkDataset(IterableDataset):
             normalize_actions: Whether to normalize actions
             normalization_mode: Normalization mode ("quantile" or "zscore")
             default_prompt: Default language instruction
+            camera_names: List of camera names to use
+            discrete_state_input: Whether to use discrete state (Pi0.5)
             overfit_split_ratio: Ratio of steps for overfitting detection
             split: Dataset split ("train" or "overfit")
             split_seed: Random seed for splitting
@@ -91,6 +107,7 @@ class CraneX7ActionChunkDataset(IterableDataset):
         self.action_horizon = action_horizon
         self.source_action_dim = source_action_dim
         self.target_action_dim = target_action_dim
+        self.max_token_len = max_token_len
         self.resize_resolution = resize_resolution
         self.shuffle_buffer_size = shuffle_buffer_size
         self.train = train
@@ -98,6 +115,8 @@ class CraneX7ActionChunkDataset(IterableDataset):
         self.normalize_actions = normalize_actions
         self.normalization_mode = normalization_mode
         self.default_prompt = default_prompt
+        self.camera_names = camera_names or self.CAMERA_NAMES[:1]  # Default: only base camera
+        self.discrete_state_input = discrete_state_input
         self.overfit_split_ratio = overfit_split_ratio
         self.split = split
         self.split_seed = split_seed
@@ -109,9 +128,12 @@ class CraneX7ActionChunkDataset(IterableDataset):
         self.action_chunker = ActionChunker(action_horizon, interpolation="linear")
         self.action_normalizer = ActionNormalizer(mode=normalization_mode)
 
+        # Initialize tokenizer (lazy load)
+        self._tokenizer = None
+
         # Find all TFRecord files
         self.tfrecord_files = self._find_tfrecord_files()
-        print(f"[Rank {self.rank}/{self.world_size}] Found {len(self.tfrecord_files)} TFRecord files")
+        logger.info(f"[Rank {self.rank}/{self.world_size}] Found {len(self.tfrecord_files)} TFRecord files")
 
         # Load or compute statistics
         self.dataset_statistics = self._get_dataset_statistics()
@@ -122,11 +144,30 @@ class CraneX7ActionChunkDataset(IterableDataset):
 
         # Load episodes into memory for efficient chunking
         self.episodes = self._load_episodes()
-        print(f"[Rank {self.rank}/{self.world_size}] Loaded {len(self.episodes)} episodes")
+        logger.info(f"[Rank {self.rank}/{self.world_size}] Loaded {len(self.episodes)} episodes")
 
-        # Compute total number of valid samples (each step that can form a full chunk)
+        # Compute total number of valid samples
         self.total_samples = sum(max(0, len(ep) - self.action_horizon) for ep in self.episodes)
-        print(f"[Rank {self.rank}/{self.world_size}] Total samples: {self.total_samples}")
+        logger.info(f"[Rank {self.rank}/{self.world_size}] Total samples: {self.total_samples}")
+
+    @property
+    def tokenizer(self):
+        """Lazy-load tokenizer."""
+        if self._tokenizer is None:
+            import os
+
+            from transformers import AutoTokenizer
+
+            # Get HuggingFace token from environment
+            hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+
+            # Use Gemma tokenizer
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                "google/gemma-2b",
+                trust_remote_code=True,
+                token=hf_token,
+            )
+        return self._tokenizer
 
     def _find_tfrecord_files(self) -> list[Path]:
         """Find all TFRecord files in the data directory."""
@@ -142,7 +183,6 @@ class CraneX7ActionChunkDataset(IterableDataset):
         if stats_path.exists():
             with stats_path.open() as f:
                 stats = json.load(f)
-                # Handle nested format
                 if "crane_x7" in stats:
                     return stats["crane_x7"]
                 return stats
@@ -160,7 +200,6 @@ class CraneX7ActionChunkDataset(IterableDataset):
                 "q_high": np.array(action_stats["q99"]),
                 "range": np.array(action_stats["q99"]) - np.array(action_stats["q01"]),
             }
-            # Avoid division by zero
             self.action_normalizer.stats["range"] = np.where(
                 self.action_normalizer.stats["range"] < 1e-6, 1.0, self.action_normalizer.stats["range"]
             )
@@ -182,7 +221,6 @@ class CraneX7ActionChunkDataset(IterableDataset):
                 try:
                     example = tf.io.parse_single_example(raw_record, self.FEATURE_DESCRIPTION)
                 except tf.errors.InvalidArgumentError:
-                    # Try minimal features
                     minimal_desc = {
                         "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
                         "observation/image_primary": tf.io.FixedLenFeature([], tf.string),
@@ -237,12 +275,29 @@ class CraneX7ActionChunkDataset(IterableDataset):
 
         return image
 
+    def _tokenize_prompt(self, prompt: str) -> tuple[np.ndarray, np.ndarray]:
+        """Tokenize language prompt.
+
+        Args:
+            prompt: Language instruction string
+
+        Returns:
+            Tuple of (token_ids, attention_mask)
+        """
+        encoding = self.tokenizer(
+            prompt,
+            max_length=self.max_token_len,
+            padding="max_length",
+            truncation=True,
+            return_tensors="np",
+        )
+        return encoding["input_ids"][0], encoding["attention_mask"][0].astype(bool)
+
     def _should_include_step(self, episode_idx: int, step_idx: int) -> bool:
         """Determine if a step should be included based on split."""
         if self.overfit_split_ratio <= 0:
             return True
 
-        # Deterministic hash for splitting
         hash_value = hash((episode_idx, step_idx, self.split_seed))
         mod_value = abs(hash_value) % 1000
         threshold = int(self.overfit_split_ratio * 1000)
@@ -253,7 +308,7 @@ class CraneX7ActionChunkDataset(IterableDataset):
             return mod_value >= threshold
 
     def __iter__(self):
-        """Iterate over dataset yielding action chunk samples."""
+        """Iterate over dataset yielding Pi0 format samples."""
         # Create list of (episode_idx, step_idx) pairs
         samples = []
         for ep_idx, episode in enumerate(self.episodes):
@@ -267,12 +322,20 @@ class CraneX7ActionChunkDataset(IterableDataset):
 
         for ep_idx, step_idx in samples:
             episode = self.episodes[ep_idx]
-
-            # Current observation
             current_step = episode[step_idx]
 
-            # Decode and process image
+            # Decode and process image (use base camera as primary)
             image = self._decode_and_process_image(current_step["image_bytes"])
+
+            # Normalize to [-1, 1] for Pi0
+            image_normalized = (image.astype(np.float32) / 127.5) - 1.0
+
+            # Create image dict for all cameras (duplicate if only one camera)
+            images = {}
+            image_masks = {}
+            for camera_name in self.camera_names:
+                images[camera_name] = torch.tensor(image_normalized, dtype=torch.float32).permute(2, 0, 1)  # HWC -> CHW
+                image_masks[camera_name] = torch.tensor(True)
 
             # Current state (pad to target dim)
             state = current_step["state"]
@@ -288,20 +351,19 @@ class CraneX7ActionChunkDataset(IterableDataset):
                     action = self.action_normalizer.normalize(action)
                 action_padded = self.action_padder.pad(action)
                 action_chunk.append(action_padded)
+            action_chunk = np.stack(action_chunk, axis=0)
 
-            action_chunk = np.stack(action_chunk, axis=0)  # (horizon, 32)
-
-            # Prompt
+            # Tokenize prompt
             prompt = current_step.get("prompt", self.default_prompt)
+            token_ids, token_mask = self._tokenize_prompt(prompt)
 
             yield {
-                "observation": {
-                    "state": torch.tensor(state_padded, dtype=torch.float32),
-                    "image": {
-                        "base_0_rgb": torch.tensor(image, dtype=torch.uint8),
-                    },
-                },
+                "images": images,
+                "image_masks": image_masks,
+                "state": torch.tensor(state_padded, dtype=torch.float32),
                 "actions": torch.tensor(action_chunk, dtype=torch.float32),
+                "lang_tokens": torch.tensor(token_ids, dtype=torch.long),
+                "lang_masks": torch.tensor(token_mask, dtype=torch.bool),
                 "prompt": prompt,
             }
 
@@ -309,28 +371,42 @@ class CraneX7ActionChunkDataset(IterableDataset):
         return self.total_samples
 
 
-def collate_action_chunk_batch(batch: list[dict]) -> dict[str, Any]:
+def collate_pi0_batch(batch: list[dict]) -> dict[str, Any]:
     """
-    Collate function for action chunk dataset.
+    Collate function for Pi0 dataset.
 
     Args:
-        batch: List of samples from CraneX7ActionChunkDataset
+        batch: List of samples from CraneX7Pi0Dataset
 
     Returns:
         Collated batch with batched tensors
     """
-    states = torch.stack([b["observation"]["state"] for b in batch])
-    images = torch.stack([b["observation"]["image"]["base_0_rgb"] for b in batch])
+    # Collate images per camera
+    images = {}
+    image_masks = {}
+    camera_names = list(batch[0]["images"].keys())
+
+    for camera_name in camera_names:
+        images[camera_name] = torch.stack([b["images"][camera_name] for b in batch])
+        image_masks[camera_name] = torch.stack([b["image_masks"][camera_name] for b in batch])
+
+    states = torch.stack([b["state"] for b in batch])
     actions = torch.stack([b["actions"] for b in batch])
+    lang_tokens = torch.stack([b["lang_tokens"] for b in batch])
+    lang_masks = torch.stack([b["lang_masks"] for b in batch])
     prompts = [b["prompt"] for b in batch]
 
     return {
-        "observation": {
-            "state": states,
-            "image": {
-                "base_0_rgb": images,
-            },
-        },
+        "images": images,
+        "image_masks": image_masks,
+        "state": states,
         "actions": actions,
+        "lang_tokens": lang_tokens,
+        "lang_masks": lang_masks,
         "prompts": prompts,
     }
+
+
+# Alias for backward compatibility
+CraneX7ActionChunkDataset = CraneX7Pi0Dataset
+collate_action_chunk_batch = collate_pi0_batch
