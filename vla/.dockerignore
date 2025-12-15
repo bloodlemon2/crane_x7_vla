@@ -39,10 +39,18 @@ ENV/
 
 # Data and checkpoints (mount these as volumes)
 data/
+data
 checkpoints/
+checkpoints
 logs/
+logs
 outputs/
+outputs
+outputs/**
+**/outputs
+**/outputs/**
 wandb/
+wandb
 *.tfrecord
 *.npz
 *.h5
