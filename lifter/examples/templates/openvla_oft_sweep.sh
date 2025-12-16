@@ -103,6 +103,7 @@ nvidia-smi || true
 
 # crane_x7_vla の agent コマンドを使用してSweepからパラメータを取得し、トレーニングを実行
 # wandb.agent()が内部で呼ばれ、RunがSweepに正しく関連付けられる
+# OFT固有設定（action_horizon, film, proprio等）はconfig経由またはSweepパラメータで指定
 python -m crane_x7_vla.training.cli agent openvla-oft \
     --sweep-id "{{SWEEP_ID}}" \
     --entity "{{WANDB_ENTITY}}" \
@@ -110,7 +111,11 @@ python -m crane_x7_vla.training.cli agent openvla-oft \
     --data-root "${DATA_ROOT}" \
     --output-dir "${OUTPUT_DIR}/checkpoints" \
     --experiment-name "crane_x7_openvla_oft_sweep" \
-    --max-steps "${MAX_STEPS}"
+    --training-max-steps "${MAX_STEPS}" \
+    --training-save-interval "${SAVE_INTERVAL}" \
+    --training-eval-interval "${EVAL_INTERVAL}" \
+    --overfitting-overfit-check-interval "${OVERFIT_CHECK_INTERVAL}" \
+    --training-gradient-checkpointing
 
 echo "=== Job Completed ==="
 echo "End time: $(date)"

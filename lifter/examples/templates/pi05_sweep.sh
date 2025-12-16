@@ -111,7 +111,11 @@ python -m crane_x7_vla.training.cli agent pi0.5 \
     --data-root "${DATA_ROOT}" \
     --output-dir "${OUTPUT_DIR}/checkpoints" \
     --experiment-name "crane_x7_pi05_sweep" \
-    --max-steps "${MAX_STEPS}"
+    --training-max-steps "${MAX_STEPS}" \
+    --training-save-interval "${SAVE_INTERVAL}" \
+    --training-eval-interval "${EVAL_INTERVAL}" \
+    --overfitting-overfit-check-interval "${OVERFIT_CHECK_INTERVAL}" \
+    --training-gradient-checkpointing
 
 echo "=== Job Completed ==="
 echo "End time: $(date)"

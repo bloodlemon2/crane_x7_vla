@@ -112,9 +112,12 @@ python -m crane_x7_vla.training.cli train pi0 \
     --data-root "${DATA_ROOT}" \
     --output-dir "${OUTPUT_DIR}/checkpoints" \
     --experiment-name "crane_x7_pi0" \
-    --batch-size "${BATCH_SIZE}" \
-    --learning-rate "${LEARNING_RATE}" \
-    --max-steps "${MAX_STEPS}"
+    --training-batch-size "${BATCH_SIZE}" \
+    --training-learning-rate "${LEARNING_RATE}" \
+    --training-max-steps "${MAX_STEPS}" \
+    --training-save-interval "${SAVE_INTERVAL}" \
+    --training-eval-interval "${EVAL_INTERVAL}" \
+    --training-gradient-checkpointing
 
 TRAIN_EXIT_CODE=$?
 
