@@ -115,8 +115,7 @@ python -m crane_x7_vla.training.cli agent openvla \
     --training-save-interval "${SAVE_INTERVAL}" \
     --training-eval-interval "${EVAL_INTERVAL}" \
     --overfitting-overfit-check-interval "${OVERFIT_CHECK_INTERVAL}" \
-    --training-gradient-checkpointing \
-    --use-lora
+    --training-gradient-checkpointing
 
 echo "=== Job Completed ==="
 echo "End time: $(date)"

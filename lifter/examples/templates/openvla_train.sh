@@ -118,8 +118,7 @@ python -m crane_x7_vla.training.cli train openvla \
     --training-max-steps "${MAX_STEPS}" \
     --training-save-interval "${SAVE_INTERVAL}" \
     --training-eval-interval "${EVAL_INTERVAL}" \
-    --training-gradient-checkpointing \
-    --use-lora
+    --training-gradient-checkpointing
 
 TRAIN_EXIT_CODE=$?
 
