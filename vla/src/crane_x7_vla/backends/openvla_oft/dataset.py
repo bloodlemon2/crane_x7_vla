@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
-import tensorflow as tf
 import torch
 from PIL import Image
 from torch.utils.data import IterableDataset
@@ -30,6 +29,9 @@ from transformers import PreTrainedTokenizerBase
 
 from crane_x7_vla.backends.common.prompting import PromptBuilder
 from crane_x7_vla.backends.common.types import ImageTransform
+from crane_x7_vla.core.data.image_augmentation import ImageAugmentationConfig, ImageAugmentor
+from crane_x7_vla.core.data.image_utils import decode_jpeg, resize_image
+from crane_x7_vla.core.data.tfrecord_reader import TFRecordReader, find_tfrecord_files
 
 
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
@@ -178,15 +180,23 @@ class CraneX7OFTDataset(IterableDataset):
     is repeated to fill the chunk.
     """
 
-    FEATURE_DESCRIPTION: ClassVar[dict[str, Any]] = {
-        "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
-        "observation/image_primary": tf.io.FixedLenFeature([], tf.string),
-        "observation/timestep": tf.io.FixedLenFeature([1], tf.int64, default_value=[0]),
-        "action": tf.io.FixedLenFeature([8], tf.float32),
-        "task/language_instruction": tf.io.FixedLenFeature([], tf.string, default_value=b"manipulate the object"),
-        "dataset_name": tf.io.FixedLenFeature([], tf.string, default_value=b"crane_x7"),
+    # TFRecord feature description (tfrecord library format)
+    FEATURE_DESCRIPTION: ClassVar[dict[str, str]] = {
+        "observation/proprio": "float",
+        "observation/image_primary": "byte",
+        "observation/timestep": "int",
+        "action": "float",
+        "task/language_instruction": "byte",
+        "dataset_name": "byte",
         # Multi-camera support
-        "observation/image_wrist": tf.io.FixedLenFeature([], tf.string, default_value=b""),
+        "observation/image_wrist": "byte",
+    }
+
+    # Minimal feature description for backward compatibility
+    FEATURE_DESCRIPTION_MINIMAL: ClassVar[dict[str, str]] = {
+        "observation/proprio": "float",
+        "observation/image_primary": "byte",
+        "action": "float",
     }
 
     def __init__(
@@ -259,11 +269,7 @@ class CraneX7OFTDataset(IterableDataset):
 
     def _find_tfrecord_files(self) -> list[Path]:
         """Find all TFRecord files in the data directory."""
-        tfrecord_files = list(self.data_root_dir.glob("episode_*/episode_data.tfrecord"))
-        if not tfrecord_files:
-            tfrecord_files = list(self.data_root_dir.glob("**/*.tfrecord"))
-        tfrecord_files = [f for f in tfrecord_files if not f.name.endswith(".bak")]
-        return sorted(tfrecord_files)
+        return find_tfrecord_files(self.data_root_dir)
 
     def _get_dataset_statistics(self) -> dict[str, Any]:
         """Load or compute dataset statistics."""
@@ -285,19 +291,23 @@ class CraneX7OFTDataset(IterableDataset):
         proprios = []
         num_transitions = 0
 
-        for tfrecord_file in self.tfrecord_files:
-            dataset = tf.data.TFRecordDataset(str(tfrecord_file))
-            for raw_record in dataset:
-                example = tf.io.parse_single_example(
-                    raw_record,
-                    {
-                        "action": tf.io.FixedLenFeature([8], tf.float32),
-                        "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
-                    },
-                )
-                actions.append(example["action"].numpy())
-                proprios.append(example["observation/proprio"].numpy())
-                num_transitions += 1
+        reader = TFRecordReader(
+            self.tfrecord_files,
+            feature_spec=self.FEATURE_DESCRIPTION_MINIMAL,
+        )
+        for example in reader:
+            action = example.get("action")
+            proprio = example.get("observation/proprio")
+
+            if action is not None:
+                action = np.array(action, dtype=np.float32).reshape(8)
+                actions.append(action)
+
+            if proprio is not None:
+                proprio = np.array(proprio, dtype=np.float32).reshape(8)
+                proprios.append(proprio)
+
+            num_transitions += 1
 
         if num_transitions == 0:
             raise ValueError("No valid data found in TFRecord files")
@@ -365,19 +375,38 @@ class CraneX7OFTDataset(IterableDataset):
         """Load all episodes into memory for action chunking."""
         self.episodes = []
 
+        # Initialize image augmentor
+        self._augmentor = ImageAugmentor(
+            target_size=self.resize_resolution,
+            config=ImageAugmentationConfig(),
+        )
+
         for tfrecord_file in self.tfrecord_files:
             episode_steps = []
-            dataset = tf.data.TFRecordDataset(str(tfrecord_file))
+            reader = TFRecordReader([tfrecord_file], feature_spec=self.FEATURE_DESCRIPTION)
 
-            for raw_record in dataset:
-                example = tf.io.parse_single_example(raw_record, self.FEATURE_DESCRIPTION)
+            for example in reader:
+                # Get action
+                action = example.get("action")
+                if action is not None:
+                    action = np.array(action, dtype=np.float32).reshape(8)
+                else:
+                    action = np.zeros(8, dtype=np.float32)
+
+                # Get proprio
+                proprio = example.get("observation/proprio")
+                if proprio is not None:
+                    proprio = np.array(proprio, dtype=np.float32).reshape(8)
+                else:
+                    proprio = np.zeros(8, dtype=np.float32)
+
                 step = {
-                    "action": example["action"].numpy(),
-                    "proprio": example["observation/proprio"].numpy(),
-                    "image_primary": example["observation/image_primary"].numpy(),
-                    "image_wrist": example["observation/image_wrist"].numpy(),
-                    "language_instruction": example["task/language_instruction"].numpy(),
-                    "dataset_name": example["dataset_name"].numpy(),
+                    "action": action,
+                    "proprio": proprio,
+                    "image_primary": example.get("observation/image_primary", b""),
+                    "image_wrist": example.get("observation/image_wrist", b""),
+                    "language_instruction": example.get("task/language_instruction", b"manipulate the object"),
+                    "dataset_name": example.get("dataset_name", b"crane_x7"),
                 }
                 episode_steps.append(step)
 
@@ -411,34 +440,17 @@ class CraneX7OFTDataset(IterableDataset):
 
         return np.stack(actions, axis=0)  # (action_horizon, action_dim)
 
-    def _decode_image(self, image_bytes: bytes) -> np.ndarray:
+    def _decode_image(self, image_bytes: bytes) -> np.ndarray | None:
         """Decode JPEG image and resize."""
         if not image_bytes:
             return None
-        image = tf.io.decode_jpeg(image_bytes, channels=3)
-        image = tf.image.resize(image, self.resize_resolution)
-        image = tf.cast(image, tf.uint8)
-        return image.numpy()
+        image = decode_jpeg(image_bytes, channels=3)
+        image = resize_image(image, self.resize_resolution)
+        return image
 
     def _apply_image_augmentation(self, image: np.ndarray) -> np.ndarray:
         """Apply image augmentation."""
-        image = tf.convert_to_tensor(image)
-        image = tf.cast(image, tf.float32) / 255.0
-
-        # Random crop
-        crop_size = tf.cast(tf.cast(tf.shape(image)[:2], tf.float32) * 0.9, tf.int32)
-        image = tf.image.random_crop(image, [crop_size[0], crop_size[1], 3])
-        image = tf.image.resize(image, self.resize_resolution)
-
-        # Color augmentations
-        image = tf.image.random_brightness(image, max_delta=0.2)
-        image = tf.image.random_contrast(image, lower=0.8, upper=1.2)
-        image = tf.image.random_saturation(image, lower=0.8, upper=1.2)
-        image = tf.image.random_hue(image, max_delta=0.05)
-
-        image = tf.clip_by_value(image, 0.0, 1.0)
-        image = tf.cast(image * 255.0, tf.uint8)
-        return image.numpy()
+        return self._augmentor(image)
 
     def _should_include_step(self, episode_idx: int, step_idx: int) -> bool:
         """Determine if step should be included based on split."""

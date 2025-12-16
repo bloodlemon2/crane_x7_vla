@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
-import tensorflow as tf
+
+from crane_x7_vla.core.data.image_utils import decode_jpeg, decode_raw
+from crane_x7_vla.core.data.tfrecord_reader import TFRecordReader, find_tfrecord_files
 
 
 logger = logging.getLogger(__name__)
@@ -27,15 +29,15 @@ class CraneX7DataAdapter:
     for different VLA backends.
     """
 
-    # TFRecord feature description (CRANE-X7 format)
-    FEATURE_DESCRIPTION: ClassVar[dict[str, Any]] = {
-        "observation/state": tf.io.FixedLenFeature([8], tf.float32),
-        "observation/image": tf.io.FixedLenFeature([], tf.string),
-        "observation/depth": tf.io.FixedLenFeature([], tf.string),
-        "observation/timestamp": tf.io.FixedLenFeature([1], tf.float32),
-        "action": tf.io.FixedLenFeature([8], tf.float32),
-        "prompt": tf.io.FixedLenFeature([], tf.string),
-        "task": tf.io.FixedLenFeature([], tf.string),
+    # TFRecord feature description (tfrecord library format)
+    FEATURE_DESCRIPTION: ClassVar[dict[str, str]] = {
+        "observation/state": "float",
+        "observation/image": "byte",
+        "observation/depth": "byte",
+        "observation/timestamp": "float",
+        "action": "float",
+        "prompt": "byte",
+        "task": "byte",
     }
 
     # Alternative key names (for compatibility)
@@ -45,6 +47,13 @@ class CraneX7DataAdapter:
         "observation/depth_primary": "observation/depth",
         "task/language_instruction": "prompt",
         "dataset_name": "task",
+    }
+
+    # Minimal feature description for backward compatibility
+    FEATURE_DESCRIPTION_MINIMAL: ClassVar[dict[str, str]] = {
+        "observation/state": "float",
+        "observation/image": "byte",
+        "action": "float",
     }
 
     def __init__(
@@ -77,104 +86,34 @@ class CraneX7DataAdapter:
 
     def _find_tfrecord_files(self) -> list[Path]:
         """Find all TFRecord files in the data directory."""
+        # First try with split filter
         pattern = f"**/*{self.split}*.tfrecord*"
         files = list(self.data_root.glob(pattern))
 
         if not files:
-            # Try without split filter
-            files = list(self.data_root.glob("**/*.tfrecord*"))
+            # Try without split filter using common function
+            files = find_tfrecord_files(self.data_root)
 
         return sorted(files)
 
-    def _parse_example(self, example_proto):
-        """Parse a single TFRecord example."""
-        # Create a flexible feature description
-        feature_description = {}
-        for key, feature in self.FEATURE_DESCRIPTION.items():
-            feature_description[key] = feature
-
-        # Also add aliases
-        for alias_key, real_key in self.KEY_ALIASES.items():
-            if real_key in self.FEATURE_DESCRIPTION:
-                feature_description[alias_key] = self.FEATURE_DESCRIPTION[real_key]
-
-        # Parse with flexible keys (some might be missing)
-        try:
-            parsed = tf.io.parse_single_example(example_proto, feature_description)
-        except tf.errors.InvalidArgumentError:
-            # Try with minimal required features only
-            minimal_description = {
-                "observation/state": tf.io.FixedLenFeature([8], tf.float32),
-                "observation/image": tf.io.FixedLenFeature([], tf.string),
-                "action": tf.io.FixedLenFeature([8], tf.float32),
-            }
-            # Try aliases
-            for alias, real in self.KEY_ALIASES.items():
-                if real in minimal_description:
-                    minimal_description[alias] = minimal_description[real]
-
-            parsed = tf.io.parse_single_example(example_proto, minimal_description)
-
-        # Normalize keys (convert aliases to standard names)
+    def _normalize_keys(self, example: dict[str, Any]) -> dict[str, Any]:
+        """Normalize key names (convert aliases to standard names)."""
         normalized = {}
-        for key, value in parsed.items():
+        for key, value in example.items():
             if key in self.KEY_ALIASES:
                 normalized[self.KEY_ALIASES[key]] = value
             else:
                 normalized[key] = value
-
         return normalized
 
-    def _decode_image(self, image_bytes):
+    def _decode_image(self, image_bytes: bytes) -> np.ndarray:
         """Decode JPEG-encoded image."""
-        image = tf.image.decode_jpeg(image_bytes, channels=3)
-        return image
+        return decode_jpeg(image_bytes, channels=3)
 
-    def _decode_depth(self, depth_bytes):
+    def _decode_depth(self, depth_bytes: bytes) -> np.ndarray:
         """Decode depth image from bytes."""
         # Depth is stored as float32 bytes
-        depth = tf.io.decode_raw(depth_bytes, tf.float32)
-        # Note: We don't know the original shape here
-        # This is a limitation - ideally shape should be stored in metadata
-        return depth
-
-    def get_tf_dataset(self, batch_size: int = 32, drop_remainder: bool = False) -> tf.data.Dataset:
-        """
-        Get TensorFlow dataset.
-
-        Args:
-            batch_size: Batch size
-            drop_remainder: Whether to drop the last incomplete batch
-
-        Returns:
-            tf.data.Dataset
-        """
-        # Create dataset from TFRecord files
-        dataset = tf.data.TFRecordDataset([str(f) for f in self.tfrecord_files], num_parallel_reads=tf.data.AUTOTUNE)
-
-        # Parse examples
-        dataset = dataset.map(self._parse_example, num_parallel_calls=tf.data.AUTOTUNE)
-
-        # Decode images
-        def decode_images(example):
-            example["observation/image"] = self._decode_image(example["observation/image"])
-            if self.include_depth and "observation/depth" in example:
-                example["observation/depth"] = self._decode_depth(example["observation/depth"])
-            return example
-
-        dataset = dataset.map(decode_images, num_parallel_calls=tf.data.AUTOTUNE)
-
-        # Shuffle if requested
-        if self.shuffle:
-            dataset = dataset.shuffle(buffer_size=self.buffer_size)
-
-        # Batch
-        dataset = dataset.batch(batch_size, drop_remainder=drop_remainder)
-
-        # Prefetch
-        dataset = dataset.prefetch(tf.data.AUTOTUNE)
-
-        return dataset
+        return decode_raw(depth_bytes, dtype=np.float32)
 
     def iterate_episodes(self) -> Iterator[dict[str, np.ndarray]]:
         """
@@ -183,24 +122,39 @@ class CraneX7DataAdapter:
         Yields:
             Dictionary containing episode data
         """
-        dataset = tf.data.TFRecordDataset([str(f) for f in self.tfrecord_files])
-        dataset = dataset.map(self._parse_example)
+        reader = TFRecordReader(
+            self.tfrecord_files,
+            feature_spec=self.FEATURE_DESCRIPTION,
+            use_alternative_keys=True,
+        )
 
-        for example in dataset:
-            # Convert to numpy
-            episode = {}
-            for key, value in example.items():
-                if isinstance(value, tf.Tensor):
-                    episode[key] = value.numpy()
-                else:
-                    episode[key] = value
+        for example in reader:
+            episode = self._normalize_keys(example)
+
+            # Convert arrays to proper shapes
+            if "observation/state" in episode:
+                state = episode["observation/state"]
+                if state is not None:
+                    episode["observation/state"] = np.array(state, dtype=np.float32).reshape(8)
+
+            if "action" in episode:
+                action = episode["action"]
+                if action is not None:
+                    episode["action"] = np.array(action, dtype=np.float32).reshape(8)
 
             # Decode image
-            if "observation/image" in episode:
-                episode["observation/image"] = self._decode_image(episode["observation/image"]).numpy()
+            if episode.get("observation/image"):
+                try:
+                    episode["observation/image"] = self._decode_image(episode["observation/image"])
+                except Exception:
+                    episode["observation/image"] = None
 
-            if self.include_depth and "observation/depth" in episode:
-                episode["observation/depth"] = self._decode_depth(episode["observation/depth"]).numpy()
+            # Decode depth if included
+            if self.include_depth and "observation/depth" in episode and episode["observation/depth"]:
+                try:
+                    episode["observation/depth"] = self._decode_depth(episode["observation/depth"])
+                except Exception:
+                    episode["observation/depth"] = None
 
             yield episode
 
@@ -223,7 +177,7 @@ class CraneX7DataAdapter:
 
         for episode in self.iterate_episodes():
             for key in keys:
-                if key in episode:
+                if key in episode and episode[key] is not None:
                     data[key].append(episode[key])
 
         # Compute statistics

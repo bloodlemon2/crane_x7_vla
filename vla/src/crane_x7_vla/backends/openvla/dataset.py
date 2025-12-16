@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
-import tensorflow as tf
 import torch
 from PIL import Image
 from torch.utils.data import IterableDataset
@@ -27,6 +26,9 @@ from transformers import PreTrainedTokenizerBase
 from crane_x7_vla.backends.common.prompting import PromptBuilder
 from crane_x7_vla.backends.common.tokenizer import ActionTokenizer
 from crane_x7_vla.backends.common.types import ImageTransform
+from crane_x7_vla.core.data.image_augmentation import ImageAugmentationConfig, ImageAugmentor
+from crane_x7_vla.core.data.image_utils import decode_jpeg, resize_image
+from crane_x7_vla.core.data.tfrecord_reader import TFRecordReader, find_tfrecord_files
 
 
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
@@ -148,18 +150,24 @@ class CraneX7Dataset(IterableDataset):
     allowing proper detection of memorization vs generalization.
     """
 
-    # TFRecord feature description for CRANE-X7 format
-    # Note: Optional features use default_value to handle missing keys gracefully
-    FEATURE_DESCRIPTION: ClassVar[dict[str, Any]] = {
-        "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
-        "observation/image_primary": tf.io.FixedLenFeature([], tf.string),
-        "observation/timestep": tf.io.FixedLenFeature([1], tf.int64, default_value=[0]),
-        "action": tf.io.FixedLenFeature([8], tf.float32),
-        "task/language_instruction": tf.io.FixedLenFeature([], tf.string, default_value=b"manipulate the object"),
-        "dataset_name": tf.io.FixedLenFeature([], tf.string, default_value=b"crane_x7"),
-        # Optional multi-camera support (empty bytes = not present)
-        "observation/image_secondary": tf.io.FixedLenFeature([], tf.string, default_value=b""),
-        "observation/image_wrist": tf.io.FixedLenFeature([], tf.string, default_value=b""),
+    # TFRecord feature description for CRANE-X7 format (tfrecord library format)
+    FEATURE_DESCRIPTION: ClassVar[dict[str, str]] = {
+        "observation/proprio": "float",
+        "observation/image_primary": "byte",
+        "observation/timestep": "int",
+        "action": "float",
+        "task/language_instruction": "byte",
+        "dataset_name": "byte",
+        # Optional multi-camera support
+        "observation/image_secondary": "byte",
+        "observation/image_wrist": "byte",
+    }
+
+    # Minimal feature description for backward compatibility
+    FEATURE_DESCRIPTION_MINIMAL: ClassVar[dict[str, str]] = {
+        "observation/proprio": "float",
+        "observation/image_primary": "byte",
+        "action": "float",
     }
 
     # Optional image keys for multi-camera support (RLDS naming convention)
@@ -239,17 +247,7 @@ class CraneX7Dataset(IterableDataset):
 
     def _find_tfrecord_files(self) -> list[Path]:
         """Find all TFRecord files in the data directory."""
-        # Look for episode directories containing tfrecord files
-        tfrecord_files = list(self.data_root_dir.glob("episode_*/episode_data.tfrecord"))
-
-        # Also try to find tfrecord files directly
-        if not tfrecord_files:
-            tfrecord_files = list(self.data_root_dir.glob("**/*.tfrecord"))
-
-        # Filter out .bak files
-        tfrecord_files = [f for f in tfrecord_files if not f.name.endswith(".bak")]
-
-        return sorted(tfrecord_files)
+        return find_tfrecord_files(self.data_root_dir)
 
     def _get_dataset_statistics(self) -> dict[str, Any]:
         """
@@ -310,19 +308,24 @@ class CraneX7Dataset(IterableDataset):
         proprios = []
         num_transitions = 0
 
-        for tfrecord_file in self.tfrecord_files:
-            dataset = tf.data.TFRecordDataset(str(tfrecord_file))
-            for raw_record in dataset:
-                example = tf.io.parse_single_example(
-                    raw_record,
-                    {
-                        "action": tf.io.FixedLenFeature([8], tf.float32),
-                        "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
-                    },
-                )
-                actions.append(example["action"].numpy())
-                proprios.append(example["observation/proprio"].numpy())
-                num_transitions += 1
+        # Use TFRecordReader with minimal features for statistics computation
+        reader = TFRecordReader(
+            self.tfrecord_files,
+            feature_spec=self.FEATURE_DESCRIPTION_MINIMAL,
+        )
+        for example in reader:
+            action = example.get("action")
+            proprio = example.get("observation/proprio")
+
+            if action is not None:
+                action = np.array(action, dtype=np.float32).reshape(8)
+                actions.append(action)
+
+            if proprio is not None:
+                proprio = np.array(proprio, dtype=np.float32).reshape(8)
+                proprios.append(proprio)
+
+            num_transitions += 1
 
         # Check if any data was loaded from the TFRecord files
         if num_transitions == 0:
@@ -384,110 +387,95 @@ class CraneX7Dataset(IterableDataset):
 
         return full_stats
 
-    def _parse_example(self, example_proto):
-        """Parse a single TFRecord example.
-
-        All features including optional ones (image_secondary, image_wrist) are parsed
-        using default_value in FEATURE_DESCRIPTION, so missing keys return empty bytes.
-        """
-        return tf.io.parse_single_example(example_proto, self.FEATURE_DESCRIPTION)
-
-    def _normalize_action(self, action: tf.Tensor) -> tf.Tensor:
+    def _normalize_action(self, action: np.ndarray) -> np.ndarray:
         """
         Normalize action using BOUNDS_Q99 (matches OpenVLA).
 
         Maps [q01, q99] -> [-1, 1] and clips to [-1, 1].
+
+        Args:
+            action: Action array with shape (8,)
+
+        Returns:
+            Normalized action array
         """
         # Get stats for this dataset (dataset_statistics is nested: {dataset_name: {action: {...}}})
         stats = self.dataset_statistics[self.data_mix]
 
-        q01 = tf.constant(stats["action"]["q01"], dtype=tf.float32)
-        q99 = tf.constant(stats["action"]["q99"], dtype=tf.float32)
+        q01 = np.array(stats["action"]["q01"], dtype=np.float32)
+        q99 = np.array(stats["action"]["q99"], dtype=np.float32)
 
         # Normalize to [-1, 1]
         normalized = 2.0 * (action - q01) / (q99 - q01 + 1e-8) - 1.0
 
         # Clip to [-1, 1]
-        normalized = tf.clip_by_value(normalized, -1.0, 1.0)
+        normalized = np.clip(normalized, -1.0, 1.0)
 
         # Map unused dimensions (where min == max) to 0
-        action_min = tf.constant(stats["action"]["min"], dtype=tf.float32)
-        action_max = tf.constant(stats["action"]["max"], dtype=tf.float32)
-        zeros_mask = tf.equal(action_min, action_max)
-        normalized = tf.where(zeros_mask, 0.0, normalized)
+        action_min = np.array(stats["action"]["min"], dtype=np.float32)
+        action_max = np.array(stats["action"]["max"], dtype=np.float32)
+        zeros_mask = action_min == action_max
+        normalized = np.where(zeros_mask, 0.0, normalized)
 
         return normalized
 
-    def _decode_and_resize_image(self, image_bytes: tf.Tensor) -> tf.Tensor:
+    def _decode_and_resize_image(self, image_bytes: bytes) -> np.ndarray:
         """Decode JPEG image and resize to target resolution."""
-        image = tf.io.decode_jpeg(image_bytes, channels=3)
-        image = tf.image.resize(image, self.resize_resolution)
-        image = tf.cast(image, tf.uint8)
+        image = decode_jpeg(image_bytes, channels=3)
+        image = resize_image(image, self.resize_resolution)
         return image
 
-    def _apply_image_augmentation(self, image: tf.Tensor) -> tf.Tensor:
-        """
-        Apply image augmentation (matches OpenVLA finetune.py).
-
-        Augmentations:
-        - Random resized crop (scale=[0.9, 0.9], ratio=[1.0, 1.0])
-        - Random brightness (max_delta=0.2)
-        - Random contrast (lower=0.8, upper=1.2)
-        - Random saturation (lower=0.8, upper=1.2)
-        - Random hue (max_delta=0.05)
-        """
-        # Convert to float for augmentation
-        image = tf.cast(image, tf.float32) / 255.0
-
-        # Random resized crop (scale=0.9 means crop 90% of image)
-        crop_size = tf.cast(tf.cast(tf.shape(image)[:2], tf.float32) * 0.9, tf.int32)
-        image = tf.image.random_crop(image, [crop_size[0], crop_size[1], 3])
-        image = tf.image.resize(image, self.resize_resolution)
-
-        # Color augmentations
-        image = tf.image.random_brightness(image, max_delta=0.2)
-        image = tf.image.random_contrast(image, lower=0.8, upper=1.2)
-        image = tf.image.random_saturation(image, lower=0.8, upper=1.2)
-        image = tf.image.random_hue(image, max_delta=0.05)
-
-        # Clip values and convert back to uint8
-        image = tf.clip_by_value(image, 0.0, 1.0)
-        image = tf.cast(image * 255.0, tf.uint8)
-
-        return image
-
-    def _process_example(self, example):
+    def _process_example(self, example: dict[str, Any]) -> dict[str, Any]:
         """Process a single example: decode image, normalize action, apply augmentation."""
         # Decode and resize primary image
-        image_primary = self._decode_and_resize_image(example["observation/image_primary"])
+        image_bytes = example.get("observation/image_primary", b"")
+        image_primary = self._decode_and_resize_image(image_bytes)
 
         # Apply image augmentation if enabled
         if self.image_aug:
-            image_primary = self._apply_image_augmentation(image_primary)
+            image_primary = self._augmentor(image_primary)
 
-        # Normalize action using BOUNDS_Q99
-        action = self._normalize_action(example["action"])
+        # Get action and normalize
+        action = example.get("action")
+        if action is not None:
+            action = np.array(action, dtype=np.float32).reshape(8)
+            action = self._normalize_action(action)
+        else:
+            action = np.zeros(8, dtype=np.float32)
+
+        # Get proprio
+        proprio = example.get("observation/proprio")
+        if proprio is not None:
+            proprio = np.array(proprio, dtype=np.float32).reshape(8)
+        else:
+            proprio = np.zeros(8, dtype=np.float32)
+
+        # Get language instruction
+        lang = example.get("task/language_instruction", b"manipulate the object")
+        if isinstance(lang, bytes):
+            lang = lang.decode("utf-8", errors="replace")
+
+        # Get dataset name
+        dataset_name = example.get("dataset_name", b"crane_x7")
+        if isinstance(dataset_name, bytes):
+            dataset_name = dataset_name.decode("utf-8", errors="replace")
 
         # Restructure to RLDS batch format (with window_size=1, so add batch dim)
         observation = {
-            "image_primary": tf.expand_dims(image_primary, 0),  # [1, H, W, 3]
-            "proprio": tf.expand_dims(example["observation/proprio"], 0),  # [1, 8]
+            "image_primary": np.expand_dims(image_primary, 0),  # [1, H, W, 3]
+            "proprio": np.expand_dims(proprio, 0),  # [1, 8]
         }
-
-        # Note: Optional images (image_secondary, image_wrist) are included in
-        # FEATURE_DESCRIPTION with default_value=b"". They are not added to
-        # observation dict when empty - the model handles single-camera input.
 
         return {
             "observation": observation,
             "task": {
-                "language_instruction": example["task/language_instruction"],
+                "language_instruction": lang,
             },
-            "action": tf.expand_dims(action, 0),  # [1, 8]
-            "dataset_name": example["dataset_name"],
+            "action": np.expand_dims(action, 0),  # [1, 8]
+            "dataset_name": dataset_name,
         }
 
-    def _should_include_step(self, step_index: tf.Tensor) -> tf.Tensor:
+    def _should_include_step(self, step_index: int) -> bool:
         """
         Determine if a step should be included based on split type.
 
@@ -498,77 +486,74 @@ class CraneX7Dataset(IterableDataset):
             step_index: Global step index in the dataset
 
         Returns:
-            Boolean tensor indicating if this step should be included
+            Boolean indicating if this step should be included
         """
         if self.overfit_split_ratio <= 0:
-            return tf.constant(True)
+            return True
 
         # Use deterministic hash for splitting
-        # Hash the step index with the seed to get a pseudo-random value
-        hash_value = tf.bitwise.bitwise_xor(tf.cast(step_index, tf.int64), tf.constant(self.split_seed, dtype=tf.int64))
-        # Use modulo to get a value in [0, 1000)
-        mod_value = tf.math.abs(hash_value) % 1000
-        threshold = tf.cast(self.overfit_split_ratio * 1000, tf.int64)
+        hash_value = step_index ^ self.split_seed
+        mod_value = abs(hash_value) % 1000
+        threshold = int(self.overfit_split_ratio * 1000)
 
         if self.split == "overfit":
-            # Include steps where mod_value < threshold (overfit set)
             return mod_value < threshold
         else:
-            # Include steps where mod_value >= threshold (train set)
             return mod_value >= threshold
 
-    def _create_tf_dataset(self) -> tf.data.Dataset:
-        """Create TensorFlow dataset pipeline with normalization and augmentation."""
-        # Create dataset from TFRecord files
-        dataset = tf.data.TFRecordDataset(
-            [str(f) for f in self.tfrecord_files],
-            num_parallel_reads=tf.data.AUTOTUNE,
+    def _create_tf_dataset(self):
+        """Initialize dataset components (no longer creates TF dataset)."""
+        # Initialize image augmentor
+        self._augmentor = ImageAugmentor(
+            target_size=self.resize_resolution,
+            config=ImageAugmentationConfig(),
         )
 
-        # Shard dataset for distributed training (each GPU gets different data)
+        # Shard files for distributed training
+        files_to_use = self.tfrecord_files
         if self.world_size > 1:
-            dataset = dataset.shard(num_shards=self.world_size, index=self.rank)
+            files_to_use = [f for i, f in enumerate(self.tfrecord_files) if i % self.world_size == self.rank]
 
-        # Add step index for deterministic splitting
-        dataset = dataset.enumerate()
+        # Store for iteration
+        self._files_to_use = files_to_use
+        return None  # No TF dataset
 
-        # Parse examples and add step index
-        def parse_with_index(index, example_proto):
-            parsed = self._parse_example(example_proto)
-            parsed["_step_index"] = index
-            return parsed
-
-        dataset = dataset.map(
-            parse_with_index,
-            num_parallel_calls=16,  # Match OpenVLA: num_parallel_calls=16
+    def _generate_samples(self):
+        """Generate samples from TFRecord files."""
+        # Read all examples with their indices
+        samples = []
+        reader = TFRecordReader(
+            self._files_to_use,
+            feature_spec=self.FEATURE_DESCRIPTION,
+            use_alternative_keys=True,
         )
 
-        # Filter based on train/overfit split (step-level splitting)
-        if self.overfit_split_ratio > 0:
-            dataset = dataset.filter(lambda x: self._should_include_step(x["_step_index"]))
+        for step_index, example in enumerate(reader):
+            if self._should_include_step(step_index):
+                samples.append((step_index, example))
 
-        # Process: decode image, normalize action, apply augmentation
-        dataset = dataset.map(
-            self._process_example,
-            num_parallel_calls=16,
-        )
-
-        # Shuffle if training (with large buffer to match OpenVLA)
+        # Shuffle if training
         if self.train:
-            dataset = dataset.shuffle(buffer_size=self.shuffle_buffer_size)
+            np.random.shuffle(samples)
 
-        # Repeat for training
-        if self.train:
-            dataset = dataset.repeat()
+        # Process and yield samples
+        for _, example in samples:
+            try:
+                processed = self._process_example(example)
+                yield processed
+            except Exception:
+                # Skip problematic samples
+                continue
 
-        # Prefetch
-        dataset = dataset.prefetch(tf.data.AUTOTUNE)
+    def __iter__(self):
+        """Iterate over dataset yielding transformed batches."""
+        while True:
+            for rlds_batch in self._generate_samples():
+                yield self.batch_transform(rlds_batch)
 
-        return dataset
-
-    def __iter__(self) -> dict[str, Any]:
-        for rlds_batch in self.dataset.as_numpy_iterator():
-            yield self.batch_transform(rlds_batch)
+            # If not training, don't repeat
+            if not self.train:
+                break
 
     def __len__(self) -> int:
         return self.dataset_length

@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
-import tensorflow as tf
 import torch
 from PIL import Image
 from torch.utils.data import IterableDataset
@@ -25,6 +24,8 @@ from transformers import PreTrainedTokenizerBase
 from crane_x7_vla.backends.minivla.action_tokenizer.vq_tokenizer import (
     VQActionTokenizer,
 )
+from crane_x7_vla.core.data.image_utils import decode_jpeg, resize_image
+from crane_x7_vla.core.data.tfrecord_reader import TFRecordReader, find_tfrecord_files
 
 
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
@@ -241,15 +242,22 @@ class MiniVLADataset(IterableDataset):
     - Step-level train/overfit splitting for overfitting detection
     """
 
-    # TFRecord feature description for CRANE-X7 format with multi-camera
-    TFRECORD_FEATURES: ClassVar[dict[str, Any]] = {
-        "observation/image_primary": tf.io.FixedLenFeature([], tf.string),
-        "observation/image_wrist": tf.io.FixedLenFeature([], tf.string, default_value=b""),
-        "observation/state": tf.io.FixedLenFeature([8], tf.float32),
-        "action": tf.io.FixedLenFeature([8], tf.float32),
-        "task/language_instruction": tf.io.FixedLenFeature([], tf.string),
-        "episode_id": tf.io.FixedLenFeature([], tf.int64, default_value=0),
-        "step_id": tf.io.FixedLenFeature([], tf.int64, default_value=0),
+    # TFRecord feature description for CRANE-X7 format with multi-camera (tfrecord library format)
+    TFRECORD_FEATURES: ClassVar[dict[str, str]] = {
+        "observation/image_primary": "byte",
+        "observation/image_wrist": "byte",
+        "observation/state": "float",
+        "action": "float",
+        "task/language_instruction": "byte",
+        "episode_id": "int",
+        "step_id": "int",
+    }
+
+    # Alternative feature names for backward compatibility
+    TFRECORD_FEATURES_ALT: ClassVar[dict[str, str]] = {
+        "observation/proprio": "float",
+        "observation/image_primary": "byte",
+        "action": "float",
     }
 
     def __init__(
@@ -309,12 +317,7 @@ class MiniVLADataset(IterableDataset):
         if not data_dir.exists():
             data_dir = self.data_root
 
-        patterns = ["*.tfrecord", "*.tfrecord-*"]
-        files = []
-        for pattern in patterns:
-            files.extend(data_dir.glob(pattern))
-
-        return sorted(files)
+        return find_tfrecord_files(data_dir)
 
     @property
     def dataset_statistics(self) -> dict[str, Any]:
@@ -339,30 +342,50 @@ class MiniVLADataset(IterableDataset):
             },
         }
 
-    def _parse_tfrecord(self, serialized: tf.Tensor) -> dict[str, Any]:
+    def _parse_tfrecord(self, example: dict[str, Any]) -> dict[str, Any]:
         """Parse a single TFRecord example."""
-        example = tf.io.parse_single_example(serialized, self.TFRECORD_FEATURES)
-
         # Decode images
         obs = {}
         for key in ["observation/image_primary", "observation/image_wrist"]:
-            if key in example and example[key] != b"":
-                img_bytes = example[key]
+            img_bytes = example.get(key)
+            if img_bytes and img_bytes != b"":
                 try:
-                    img = tf.image.decode_jpeg(img_bytes, channels=3)
-                    img = tf.image.resize(img, self.resize_resolution)
-                    obs[key.split("/")[1]] = img.numpy().astype(np.uint8)
-                except (tf.errors.InvalidArgumentError, ValueError):
+                    img = decode_jpeg(img_bytes, channels=3)
+                    img = resize_image(img, self.resize_resolution)
+                    obs[key.split("/")[1]] = img
+                except Exception:
                     pass
+
+        # Get action
+        action = example.get("action")
+        action = np.array(action, dtype=np.float32).reshape(8) if action is not None else np.zeros(8, dtype=np.float32)
+
+        # Get state (for alternative key name)
+        state = example.get("observation/state") or example.get("observation/proprio")
+        if state is not None:
+            state = np.array(state, dtype=np.float32).reshape(8)
+
+        # Get language instruction
+        lang = example.get("task/language_instruction", b"manipulate the object")
+        if isinstance(lang, bytes):
+            lang = lang
+
+        # Get episode and step IDs
+        episode_id = example.get("episode_id", 0)
+        if isinstance(episode_id, np.ndarray):
+            episode_id = int(episode_id.flat[0]) if episode_id.size > 0 else 0
+        step_id = example.get("step_id", 0)
+        if isinstance(step_id, np.ndarray):
+            step_id = int(step_id.flat[0]) if step_id.size > 0 else 0
 
         return {
             "observation": obs,
-            "action": example["action"].numpy(),
+            "action": action,
             "task": {
-                "language_instruction": example["task/language_instruction"].numpy(),
+                "language_instruction": lang,
             },
-            "episode_id": example["episode_id"].numpy(),
-            "step_id": example["step_id"].numpy(),
+            "episode_id": episode_id,
+            "step_id": step_id,
             "dataset_name": self.dataset_name,
         }
 
@@ -386,52 +409,60 @@ class MiniVLADataset(IterableDataset):
 
     def __iter__(self):
         """Iterate over dataset."""
-        # Create TFRecord dataset
+        # Create TFRecord reader
         if not self.tfrecord_files:
             return
 
-        files = [str(f) for f in self.tfrecord_files]
-        raw_dataset = tf.data.TFRecordDataset(files)
-
-        # Shard for distributed training
+        # Shard files for distributed training
+        files_to_use = self.tfrecord_files
         if self.world_size > 1:
-            raw_dataset = raw_dataset.shard(self.world_size, self.rank)
+            files_to_use = [f for i, f in enumerate(self.tfrecord_files) if i % self.world_size == self.rank]
 
-        # Shuffle if training
-        if self.train and self.shuffle_buffer_size > 0:
-            raw_dataset = raw_dataset.shuffle(self.shuffle_buffer_size)
+        while True:
+            # Read all examples
+            all_examples = []
+            reader = TFRecordReader(
+                files_to_use,
+                feature_spec=self.TFRECORD_FEATURES,
+                use_alternative_keys=True,
+            )
 
-        # Repeat if training
-        if self.train:
-            raw_dataset = raw_dataset.repeat()
+            for example in reader:
+                parsed = self._parse_tfrecord(example)
+                episode_id = parsed["episode_id"]
+                step_id = parsed["step_id"]
 
-        # Buffer for action chunking
-        episode_buffer = []
-        current_episode_id = None
+                if self._should_include_step(episode_id, step_id):
+                    all_examples.append(parsed)
 
-        for raw_example in raw_dataset:
-            parsed = self._parse_tfrecord(raw_example)
+            # Shuffle if training
+            if self.train and self.shuffle_buffer_size > 0:
+                np.random.shuffle(all_examples)
 
-            episode_id = parsed["episode_id"]
-            step_id = parsed["step_id"]
+            # Buffer for action chunking (group by episode)
+            episode_buffer = []
+            current_episode_id = None
 
-            # Check if step should be included
-            if not self._should_include_step(episode_id, step_id):
-                continue
+            for parsed in all_examples:
+                episode_id = parsed["episode_id"]
 
-            # Handle episode boundaries for action chunking
-            if current_episode_id != episode_id:
-                # Process previous episode buffer
-                if episode_buffer:
-                    yield from self._process_episode_buffer(episode_buffer)
-                episode_buffer = []
-                current_episode_id = episode_id
+                # Handle episode boundaries for action chunking
+                if current_episode_id != episode_id:
+                    # Process previous episode buffer
+                    if episode_buffer:
+                        yield from self._process_episode_buffer(episode_buffer)
+                    episode_buffer = []
+                    current_episode_id = episode_id
 
-            episode_buffer.append(parsed)
+                episode_buffer.append(parsed)
 
-        # Process remaining buffer
-        if episode_buffer:
-            yield from self._process_episode_buffer(episode_buffer)
+            # Process remaining buffer
+            if episode_buffer:
+                yield from self._process_episode_buffer(episode_buffer)
+
+            # If not training, don't repeat
+            if not self.train:
+                break
 
     def _process_episode_buffer(self, buffer: list[dict[str, Any]]):
         """

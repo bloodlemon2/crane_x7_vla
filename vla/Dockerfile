@@ -8,8 +8,8 @@
 ARG CUDA_VERSION=12.8.0
 ARG CUDA_SHORT=cu128
 ARG PYTORCH_VERSION=2.9.1
-ARG PYTHON_VERSION=3.11
-ARG PYTHON_SHORT=311
+ARG PYTHON_VERSION=3.12
+ARG PYTHON_SHORT=312
 
 # ============================================================================
 # Builder Stage: Install build dependencies and Python packages
