@@ -4,18 +4,12 @@
 #
 # Unified VLA Dockerfile for CRANE-X7
 # All backends included: openvla, minivla, pi0, pi0.5
-#
-# Usage:
-#   docker build -t crane_x7_vla .
-#
-# Build with different CUDA versions:
-#   docker build --build-arg CUDA_VERSION=12.6.3 --build-arg CUDA_SHORT=cu126 -t crane_x7_vla .
-#   docker build --build-arg CUDA_VERSION=13.0.0 --build-arg CUDA_SHORT=cu130 -t crane_x7_vla .
 
-ARG CUDA_VERSION=12.6.3
-ARG CUDA_SHORT=cu126
+ARG CUDA_VERSION=12.8.0
+ARG CUDA_SHORT=cu128
 ARG PYTORCH_VERSION=2.9.1
 ARG PYTHON_VERSION=3.11
+ARG PYTHON_SHORT=311
 
 # ============================================================================
 # Builder Stage: Install build dependencies and Python packages
@@ -24,6 +18,7 @@ ARG PYTHON_VERSION=3.11
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04 AS builder
 
 ARG PYTHON_VERSION
+ARG PYTHON_SHORT
 ARG CUDA_SHORT
 ARG PYTORCH_VERSION
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -69,9 +64,9 @@ RUN python3 -m pip install "numpy>=1.24.0,<2.0.0"
 # Source: https://github.com/mjun0812/flash-attention-prebuild-wheels/releases
 # Wheel naming: flash_attn-{version}+{cuda_short}torch{pytorch_major.minor}-cp{python}-cp{python}-linux_x86_64.whl
 ARG FLASH_ATTN_VERSION=2.8.3
-ARG FLASH_ATTN_RELEASE=v0.5.4
+ARG FLASH_ATTN_RELEASE=v0.6.8
 RUN PYTORCH_SHORT=$(echo ${PYTORCH_VERSION} | cut -d. -f1,2) && \
-    WHEEL_NAME="flash_attn-${FLASH_ATTN_VERSION}+${CUDA_SHORT}torch${PYTORCH_SHORT}-cp311-cp311-linux_x86_64.whl" && \
+    WHEEL_NAME="flash_attn-${FLASH_ATTN_VERSION}+${CUDA_SHORT}torch${PYTORCH_SHORT}-cp${PYTHON_SHORT}-cp${PYTHON_SHORT}-linux_x86_64.whl" && \
     wget -q "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/${FLASH_ATTN_RELEASE}/${WHEEL_NAME}" && \
     python3 -m pip install "${WHEEL_NAME}" && \
     rm -f "${WHEEL_NAME}"
