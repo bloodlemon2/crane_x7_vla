@@ -83,6 +83,10 @@ RUN python3 -m pip install -r /build/requirements-openvla.txt && \
 # Install dlimp without dependencies (avoids tensorflow version conflict)
 RUN python3 -m pip install --no-deps "dlimp @ git+https://github.com/moojink/dlimp_openvla"
 
+# Install LeRobot without dependencies (avoids PyTorch downgrade from 2.9.1 to 2.7.1)
+# LeRobot's core dependencies are already installed via requirements-base.txt
+RUN python3 -m pip install --no-deps "lerobot>=0.4.0"
+
 # Force numpy 1.x at the end (tensorflow/other packages install 2.x which breaks on WSL2)
 RUN python3 -m pip install "numpy>=1.26.0,<2.0.0" --force-reinstall --no-deps
 

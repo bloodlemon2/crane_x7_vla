@@ -26,6 +26,13 @@ tensorflow==2.20.0
 tensorflow-datasets==4.9.9
 opencv-python-headless>=4.8.0
 Pillow>=10.0.0
+datasets>=2.21.0
+gymnasium>=1.0.0
+diffusers>=0.30.0
+av>=13.1.0
+imageio>=2.35.0
+deepdiff>=8.0.0
+termcolor>=2.4.0
 
 # ==============================================================================
 # Utilities
@@ -47,5 +54,6 @@ tqdm>=4.66.0
 
 # ==============================================================================
 # LeRobot for OpenPI data format
+# NOTE: Installed with --no-deps in Dockerfile to avoid PyTorch downgrade
 # ==============================================================================
-lerobot>=0.4.0
+# lerobot>=0.4.0  # See Dockerfile
