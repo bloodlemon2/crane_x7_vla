@@ -11,14 +11,23 @@ This dataset loader is designed for training Pi0 models with:
 - Support for both Pi0 (continuous state) and Pi0.5 (discrete state) formats
 """
 
+import contextlib
 import json
 import logging
 from pathlib import Path
 from typing import Any, ClassVar
 
+import cv2
 import numpy as np
 import tensorflow as tf
 import torch
+
+
+# Force TensorFlow to use CPU only to avoid CUDA conflicts with PyTorch
+# This must be done before any TensorFlow operations
+with contextlib.suppress(RuntimeError):
+    tf.config.set_visible_devices([], "GPU")
+
 from torch.utils.data import IterableDataset
 
 from crane_x7_vla.core.transforms.action_transforms import (
@@ -271,22 +280,39 @@ class CraneX7Pi0Dataset(IterableDataset):
         return image
 
     def _apply_image_augmentation(self, image: np.ndarray) -> np.ndarray:
-        """Apply image augmentation."""
-        image = tf.cast(image, tf.float32) / 255.0
+        """Apply image augmentation using NumPy/OpenCV (CPU-only)."""
+        h, w = image.shape[:2]
 
-        # Random resized crop
-        crop_size = tf.cast(tf.cast(tf.shape(image)[:2], tf.float32) * 0.9, tf.int32)
-        image = tf.image.random_crop(image, [crop_size[0], crop_size[1], 3])
-        image = tf.image.resize(image, self.resize_resolution)
+        # Random resized crop (90% of original size)
+        crop_h, crop_w = int(h * 0.9), int(w * 0.9)
+        top = np.random.randint(0, h - crop_h + 1)
+        left = np.random.randint(0, w - crop_w + 1)
+        image = image[top : top + crop_h, left : left + crop_w]
+        image = cv2.resize(image, (self.resize_resolution[1], self.resize_resolution[0]))
 
-        # Color augmentations
-        image = tf.image.random_brightness(image, max_delta=0.2)
-        image = tf.image.random_contrast(image, lower=0.8, upper=1.2)
-        image = tf.image.random_saturation(image, lower=0.8, upper=1.2)
-        image = tf.image.random_hue(image, max_delta=0.05)
+        # Convert to float32 for color augmentation
+        image = image.astype(np.float32)
 
-        image = tf.clip_by_value(image, 0.0, 1.0)
-        image = tf.cast(image * 255.0, tf.uint8).numpy()
+        # Random brightness (±20%)
+        brightness_delta = np.random.uniform(-0.2, 0.2) * 255
+        image = image + brightness_delta
+
+        # Random contrast (0.8-1.2x)
+        contrast_factor = np.random.uniform(0.8, 1.2)
+        mean = image.mean()
+        image = (image - mean) * contrast_factor + mean
+
+        # Random saturation (0.8-1.2x) - convert to HSV
+        image_uint8 = np.clip(image, 0, 255).astype(np.uint8)
+        hsv = cv2.cvtColor(image_uint8, cv2.COLOR_RGB2HSV).astype(np.float32)
+        saturation_factor = np.random.uniform(0.8, 1.2)
+        hsv[:, :, 1] = hsv[:, :, 1] * saturation_factor
+        hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
+
+        # Random hue shift (±5% of 180 degrees)
+        hue_delta = np.random.uniform(-0.05, 0.05) * 180
+        hsv[:, :, 0] = (hsv[:, :, 0] + hue_delta) % 180
+        image = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
 
         return image
 
