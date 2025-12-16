@@ -44,9 +44,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1
 
-# Upgrade pip
-RUN python3 -m pip install --upgrade pip setuptools wheel packaging
-
 WORKDIR /build
 
 # Copy requirements files
@@ -129,10 +126,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set Python version
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1
-
-# Upgrade pip (use python3 -m pip to ensure correct Python version)
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    rm -rf /root/.cache
 
 WORKDIR /workspace/vla
 
