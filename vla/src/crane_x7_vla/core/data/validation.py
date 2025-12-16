@@ -5,7 +5,11 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
+import numpy as np
+
+from crane_x7_vla.core.data.tfrecord_reader import TFRecordReader, find_tfrecord_files
 from crane_x7_vla.core.utils.logging import get_logger
 from crane_x7_vla.data_types import DatasetInfo
 
@@ -66,12 +70,7 @@ def validate_tfrecord_dataset(data_root: Path | str) -> DatasetValidationResult:
         )
 
     # Find TFRecord files
-    tfrecord_files = list(data_root.glob("episode_*/episode_data.tfrecord"))
-    if not tfrecord_files:
-        # Try alternative patterns
-        tfrecord_files = list(data_root.glob("*.tfrecord"))
-        if not tfrecord_files:
-            tfrecord_files = list(data_root.glob("**/*.tfrecord"))
+    tfrecord_files = find_tfrecord_files(data_root)
 
     if not tfrecord_files:
         return DatasetValidationResult(
@@ -89,22 +88,10 @@ def validate_tfrecord_dataset(data_root: Path | str) -> DatasetValidationResult:
     has_depth = False
     image_size = None
 
-    # Try to import tensorflow for validation
-    try:
-        import tensorflow as tf
-    except ImportError:
-        warnings.append("TensorFlow not installed. Cannot perform deep validation of TFRecord files.")
-        return DatasetValidationResult(
-            is_valid=True,  # Assume valid if we can't check
-            num_episodes=num_episodes,
-            num_transitions=0,
-            warnings=warnings,
-        )
-
     # Validate each TFRecord file
     for tfrecord_path in tfrecord_files:
         try:
-            episode_errors, episode_info = _validate_single_tfrecord(tfrecord_path, tf)
+            episode_errors, episode_info = _validate_single_tfrecord(tfrecord_path)
             errors.extend(episode_errors)
 
             if episode_info:
@@ -156,81 +143,90 @@ def validate_tfrecord_dataset(data_root: Path | str) -> DatasetValidationResult:
     )
 
 
-def _validate_single_tfrecord(tfrecord_path: Path, tf) -> tuple[list[str], dict | None]:
+def _validate_single_tfrecord(tfrecord_path: Path) -> tuple[list[str], dict[str, Any] | None]:
     """
     Validate a single TFRecord file.
 
     Args:
         tfrecord_path: Path to TFRecord file
-        tf: TensorFlow module
 
     Returns:
         Tuple of (errors list, info dict or None)
     """
-    errors = []
-    info = {}
+    errors: list[str] = []
+    info: dict[str, Any] = {}
+
+    # Feature spec for validation (accept all common fields)
+    feature_spec = {
+        "observation/state": "float",
+        "observation/proprio": "float",
+        "observation/image": "byte",
+        "observation/image_primary": "byte",
+        "observation/depth": "byte",
+        "action": "float",
+        "task/language_instruction": "byte",
+        "prompt": "byte",
+    }
 
     try:
-        # Create dataset and read first record
-        dataset = tf.data.TFRecordDataset(str(tfrecord_path))
+        reader = TFRecordReader(
+            [tfrecord_path],
+            feature_spec=feature_spec,
+            use_alternative_keys=False,
+        )
 
         num_records = 0
         action_dim = None
         state_dim = None
         has_images = False
         has_depth = False
-        image_size = None
+        validated_records = 0
 
-        for raw_record in dataset.take(10):  # Check first 10 records
+        for example in reader:
             num_records += 1
 
-            # Parse example
-            example = tf.train.Example()
-            example.ParseFromString(raw_record.numpy())
-            features = example.features.feature
+            # Only validate first 10 records for quick validation
+            if validated_records < 10:
+                validated_records += 1
 
-            # Check for required fields
-            if "action" not in features:
-                errors.append(f"{tfrecord_path.name}: Missing 'action' field")
-                continue
+                # Check for required fields
+                action = example.get("action")
+                if action is None:
+                    errors.append(f"{tfrecord_path.name}: Missing 'action' field")
+                    continue
 
-            # Extract action dimension
-            action_feature = features["action"]
-            if action_feature.float_list.value:
-                current_action_dim = len(action_feature.float_list.value)
-                if action_dim is None:
-                    action_dim = current_action_dim
-                elif action_dim != current_action_dim:
-                    errors.append(f"{tfrecord_path.name}: Inconsistent action dimension")
+                # Extract action dimension
+                if isinstance(action, list | np.ndarray):
+                    action_arr = np.array(action).flatten()
+                    current_action_dim = len(action_arr)
+                    if action_dim is None:
+                        action_dim = current_action_dim
+                    elif action_dim != current_action_dim:
+                        errors.append(f"{tfrecord_path.name}: Inconsistent action dimension")
 
-            # Check for state
-            if "observation/state" in features:
-                state_feature = features["observation/state"]
-                if state_feature.float_list.value:
-                    state_dim = len(state_feature.float_list.value)
+                # Check for state (try both key names)
+                state = example.get("observation/state") or example.get("observation/proprio")
+                if state is not None and isinstance(state, list | np.ndarray):
+                    state_arr = np.array(state).flatten()
+                    state_dim = len(state_arr)
 
-            # Check for images
-            if "observation/image" in features:
-                has_images = True
-                # Try to get image size from metadata or decode
-                if "observation/image_shape" in features:
-                    shape = list(features["observation/image_shape"].int64_list.value)
-                    if len(shape) >= 2:
-                        image_size = (shape[0], shape[1])
+                # Check for images (try both key names)
+                image = example.get("observation/image") or example.get("observation/image_primary")
+                if image is not None and image != b"":
+                    has_images = True
 
-            if "observation/depth" in features:
-                has_depth = True
-
-        # Count all records
-        total_records = sum(1 for _ in dataset)
+                # Check for depth
+                depth = example.get("observation/depth")
+                if depth is not None and depth != b"":
+                    has_depth = True
 
         info = {
-            "num_transitions": total_records,
+            "num_transitions": num_records,
             "action_dim": action_dim,
             "state_dim": state_dim,
             "has_images": has_images,
             "has_depth": has_depth,
-            "image_size": image_size,
+            "image_size": None,  # Image size requires decoding, skip for performance
         }
 
     except Exception as e:

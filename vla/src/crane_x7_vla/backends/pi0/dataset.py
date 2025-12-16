@@ -11,7 +11,6 @@ This dataset loader is designed for training Pi0 models with:
 - Support for both Pi0 (continuous state) and Pi0.5 (discrete state) formats
 """
 
-import contextlib
 import json
 import logging
 from pathlib import Path
@@ -19,17 +18,11 @@ from typing import Any, ClassVar
 
 import cv2
 import numpy as np
-import tensorflow as tf
 import torch
-
-
-# Force TensorFlow to use CPU only to avoid CUDA conflicts with PyTorch
-# This must be done before any TensorFlow operations
-with contextlib.suppress(RuntimeError):
-    tf.config.set_visible_devices([], "GPU")
-
 from torch.utils.data import IterableDataset
 
+from crane_x7_vla.core.data.image_utils import decode_jpeg, resize_image
+from crane_x7_vla.core.data.tfrecord_reader import TFRecordReader, find_tfrecord_files
 from crane_x7_vla.core.transforms.action_transforms import (
     ActionChunker,
     ActionNormalizer,
@@ -52,14 +45,21 @@ class CraneX7Pi0Dataset(IterableDataset):
     - Provides tokenized language instructions
     """
 
-    # TFRecord feature description for CRANE-X7 format
-    FEATURE_DESCRIPTION: ClassVar[dict[str, Any]] = {
-        "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
-        "observation/image_primary": tf.io.FixedLenFeature([], tf.string),
-        "observation/timestep": tf.io.FixedLenFeature([1], tf.int64),
-        "action": tf.io.FixedLenFeature([8], tf.float32),
-        "task/language_instruction": tf.io.FixedLenFeature([], tf.string),
-        "dataset_name": tf.io.FixedLenFeature([], tf.string),
+    # TFRecord feature description for CRANE-X7 format (tfrecord library format)
+    FEATURE_DESCRIPTION: ClassVar[dict[str, str]] = {
+        "observation/proprio": "float",
+        "observation/image_primary": "byte",
+        "observation/timestep": "int",
+        "action": "float",
+        "task/language_instruction": "byte",
+        "dataset_name": "byte",
+    }
+
+    # Minimal feature description for backward compatibility
+    FEATURE_DESCRIPTION_MINIMAL: ClassVar[dict[str, str]] = {
+        "observation/proprio": "float",
+        "observation/image_primary": "byte",
+        "action": "float",
     }
 
     # Camera names following OpenPI convention
@@ -180,11 +180,7 @@ class CraneX7Pi0Dataset(IterableDataset):
 
     def _find_tfrecord_files(self) -> list[Path]:
         """Find all TFRecord files in the data directory."""
-        tfrecord_files = list(self.data_root_dir.glob("episode_*/episode_data.tfrecord"))
-        if not tfrecord_files:
-            tfrecord_files = list(self.data_root_dir.glob("**/*.tfrecord"))
-        tfrecord_files = [f for f in tfrecord_files if not f.name.endswith(".bak")]
-        return sorted(tfrecord_files)
+        return find_tfrecord_files(self.data_root_dir)
 
     def _get_dataset_statistics(self) -> dict[str, Any]:
         """Load or compute dataset statistics."""
@@ -239,40 +235,54 @@ class CraneX7Pi0Dataset(IterableDataset):
 
         for tfrecord_file in files_to_load:
             episode = []
-            dataset = tf.data.TFRecordDataset(str(tfrecord_file))
 
-            for raw_record in dataset:
-                try:
-                    example = tf.io.parse_single_example(raw_record, self.FEATURE_DESCRIPTION)
-                except tf.errors.InvalidArgumentError:
-                    minimal_desc = {
-                        "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
-                        "observation/image_primary": tf.io.FixedLenFeature([], tf.string),
-                        "action": tf.io.FixedLenFeature([8], tf.float32),
-                    }
-                    example = tf.io.parse_single_example(raw_record, minimal_desc)
-                    example["task/language_instruction"] = tf.constant(self.default_prompt.encode())
-
-                step = {
-                    "state": example["observation/proprio"].numpy(),
-                    "action": example["action"].numpy(),
-                    "image_bytes": example["observation/image_primary"].numpy(),
-                    "prompt": example.get("task/language_instruction", tf.constant(self.default_prompt.encode()))
-                    .numpy()
-                    .decode(),
-                }
-                episode.append(step)
+            # Try full feature set first, then minimal
+            try:
+                reader = TFRecordReader([tfrecord_file], feature_spec=self.FEATURE_DESCRIPTION)
+                for example in reader:
+                    step = self._parse_example(example)
+                    episode.append(step)
+            except Exception:
+                # Fallback to minimal features
+                reader = TFRecordReader([tfrecord_file], feature_spec=self.FEATURE_DESCRIPTION_MINIMAL)
+                for example in reader:
+                    step = self._parse_example(example)
+                    episode.append(step)
 
             if len(episode) >= self.action_horizon:
                 episodes.append(episode)
 
         return episodes
 
+    def _parse_example(self, example: dict[str, Any]) -> dict[str, Any]:
+        """Parse a single TFRecord example into step format."""
+        # Get state (proprio)
+        state = example.get("observation/proprio")
+        state = np.array(state, dtype=np.float32).reshape(8) if state is not None else np.zeros(8, dtype=np.float32)
+
+        # Get action
+        action = example.get("action")
+        action = np.array(action, dtype=np.float32).reshape(8) if action is not None else np.zeros(8, dtype=np.float32)
+
+        # Get image bytes
+        image_bytes = example.get("observation/image_primary", b"")
+
+        # Get prompt
+        prompt = example.get("task/language_instruction", self.default_prompt.encode())
+        if isinstance(prompt, bytes):
+            prompt = prompt.decode("utf-8", errors="replace")
+
+        return {
+            "state": state,
+            "action": action,
+            "image_bytes": image_bytes,
+            "prompt": prompt,
+        }
+
     def _decode_and_process_image(self, image_bytes: bytes) -> np.ndarray:
         """Decode and process image."""
-        image = tf.io.decode_jpeg(image_bytes, channels=3)
-        image = tf.image.resize(image, self.resize_resolution)
-        image = tf.cast(image, tf.uint8).numpy()
+        image = decode_jpeg(image_bytes, channels=3)
+        image = resize_image(image, self.resize_resolution)
 
         if self.image_aug and self.train:
             image = self._apply_image_augmentation(image)

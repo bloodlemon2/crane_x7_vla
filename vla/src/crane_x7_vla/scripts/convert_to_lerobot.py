@@ -22,9 +22,13 @@ import logging
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-import tensorflow as tf
+
+from crane_x7_vla.core.data.image_utils import decode_jpeg
+from crane_x7_vla.core.data.tfrecord_reader import TFRecordReader
+from crane_x7_vla.core.data.tfrecord_reader import find_tfrecord_files as _find_tfrecord_files
 
 
 # Try to import LeRobot (may not be available in all environments)
@@ -57,84 +61,74 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# CRANE-X7 TFRecord feature description (new format with timestep)
-FEATURE_DESCRIPTION = {
-    "observation/proprio": tf.io.FixedLenFeature([8], tf.float32),
-    "observation/image_primary": tf.io.FixedLenFeature([], tf.string),
-    "observation/timestep": tf.io.FixedLenFeature([], tf.int64),
-    "action": tf.io.FixedLenFeature([8], tf.float32),
-    "task/language_instruction": tf.io.FixedLenFeature([], tf.string),
-    "dataset_name": tf.io.FixedLenFeature([], tf.string),
-}
-
-# Alternative feature names for compatibility (old format)
-ALTERNATIVE_FEATURES = {
-    "observation/state": tf.io.FixedLenFeature([8], tf.float32),
-    "observation/image": tf.io.FixedLenFeature([], tf.string),
-    "action": tf.io.FixedLenFeature([8], tf.float32),
-    "prompt": tf.io.FixedLenFeature([], tf.string),
+# CRANE-X7 TFRecord feature description (tfrecord library format)
+FEATURE_DESCRIPTION: dict[str, str] = {
+    "observation/proprio": "float",
+    "observation/image_primary": "byte",
+    "observation/timestep": "int",
+    "action": "float",
+    "task/language_instruction": "byte",
+    "dataset_name": "byte",
+    # Alternative key names for backward compatibility
+    "observation/state": "float",
+    "observation/image": "byte",
+    "prompt": "byte",
 }
 
 
 def find_tfrecord_files(data_dir: Path) -> list[Path]:
     """Find all TFRecord files in the data directory."""
-    patterns = ["**/*.tfrecord", "**/*.tfrecord.gz", "**/*.tfrecord-*"]
-    files = []
-    for pattern in patterns:
-        files.extend(data_dir.glob(pattern))
-    return sorted(set(files))
+    return _find_tfrecord_files(data_dir)
 
 
-def parse_tfrecord_example(example_proto) -> dict:
-    """Parse a single TFRecord example with flexible key support."""
-    # Try standard features first
-    try:
-        parsed = tf.io.parse_single_example(example_proto, FEATURE_DESCRIPTION)
-    except tf.errors.InvalidArgumentError:
-        # Try with alternative features
-        try:
-            parsed = tf.io.parse_single_example(example_proto, ALTERNATIVE_FEATURES)
-        except tf.errors.InvalidArgumentError as e:
-            logger.warning(f"Failed to parse example: {e}")
-            return None
+def normalize_example(example: dict[str, Any]) -> dict[str, Any]:
+    """
+    Normalize TFRecord example keys to standard format.
 
-    # Normalize keys
-    result = {}
+    Args:
+        example: Raw example from TFRecordReader
+
+    Returns:
+        Normalized example with standard keys
+    """
+    result: dict[str, Any] = {}
 
     # State (proprioception)
-    if "observation/state" in parsed:
-        result["state"] = parsed["observation/state"]
-    elif "observation/proprio" in parsed:
-        result["state"] = parsed["observation/proprio"]
+    if "observation/state" in example and example["observation/state"] is not None:
+        result["state"] = example["observation/state"]
+    elif "observation/proprio" in example and example["observation/proprio"] is not None:
+        result["state"] = example["observation/proprio"]
 
     # Image
-    if "observation/image" in parsed:
-        result["image_bytes"] = parsed["observation/image"]
-    elif "observation/image_primary" in parsed:
-        result["image_bytes"] = parsed["observation/image_primary"]
+    if example.get("observation/image"):
+        result["image_bytes"] = example["observation/image"]
+    elif example.get("observation/image_primary"):
+        result["image_bytes"] = example["observation/image_primary"]
 
     # Action
-    if "action" in parsed:
-        result["action"] = parsed["action"]
+    if "action" in example and example["action"] is not None:
+        result["action"] = example["action"]
 
     # Prompt/Task
-    if "prompt" in parsed:
-        result["prompt"] = parsed["prompt"]
-    elif "task/language_instruction" in parsed:
-        result["prompt"] = parsed["task/language_instruction"]
+    if example.get("prompt"):
+        result["prompt"] = example["prompt"]
+    elif example.get("task/language_instruction"):
+        result["prompt"] = example["task/language_instruction"]
 
     return result
 
 
-def decode_image(image_bytes: tf.Tensor) -> np.ndarray:
+def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decode JPEG image bytes to numpy array."""
-    image = tf.image.decode_jpeg(image_bytes, channels=3)
-    return image.numpy()
+    try:
+        return decode_jpeg(image_bytes, channels=3)
+    except Exception:
+        return np.zeros((224, 224, 3), dtype=np.uint8)
 
 
 def iterate_tfrecord_episodes(
     tfrecord_files: list[Path],
-) -> Iterator[tuple[list[dict], str]]:
+) -> Iterator[tuple[list[dict[str, Any]], str]]:
     """
     Iterate over episodes in TFRecord files.
 
@@ -145,7 +139,7 @@ def iterate_tfrecord_episodes(
         Tuple of (list of steps, task name)
     """
     # Group files by episode (assuming directory structure)
-    episode_dirs = set()
+    episode_dirs: set[Path] = set()
     for f in tfrecord_files:
         episode_dirs.add(f.parent)
 
@@ -156,34 +150,47 @@ def iterate_tfrecord_episodes(
             continue
 
         # Read all steps in the episode
-        steps = []
+        steps: list[dict[str, Any]] = []
         task_name = "manipulate objects"  # Default task
 
-        dataset = tf.data.TFRecordDataset([str(f) for f in episode_files])
+        reader = TFRecordReader(
+            episode_files,
+            feature_spec=FEATURE_DESCRIPTION,
+            use_alternative_keys=False,
+        )
 
-        for example_proto in dataset:
-            parsed = parse_tfrecord_example(example_proto)
-            if parsed is None:
+        for example in reader:
+            parsed = normalize_example(example)
+            if not parsed:
                 continue
 
             # Decode image
             if "image_bytes" in parsed:
-                image = decode_image(parsed["image_bytes"])
+                image = decode_image_bytes(parsed["image_bytes"])
             else:
                 image = np.zeros((224, 224, 3), dtype=np.uint8)
 
             # Get task name from first step
             if "prompt" in parsed:
-                prompt = parsed["prompt"].numpy()
+                prompt = parsed["prompt"]
                 if isinstance(prompt, bytes):
                     prompt = prompt.decode("utf-8")
                 if prompt:
                     task_name = prompt
 
+            # Get state and action with defaults
+            state = parsed.get("state")
+            state = np.array(state, dtype=np.float32).reshape(8) if state is not None else np.zeros(8, dtype=np.float32)
+
+            action = parsed.get("action")
+            action = (
+                np.array(action, dtype=np.float32).reshape(8) if action is not None else np.zeros(8, dtype=np.float32)
+            )
+
             steps.append(
                 {
-                    "state": parsed.get("state", tf.zeros([8], dtype=tf.float32)).numpy(),
-                    "action": parsed.get("action", tf.zeros([8], dtype=tf.float32)).numpy(),
+                    "state": state,
+                    "action": action,
                     "image": image,
                 }
             )
