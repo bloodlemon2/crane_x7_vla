@@ -29,6 +29,14 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Debug Azure context
+        run: |
+          echo "Current subscription:"
+          az account show --output table
+          echo ""
+          echo "Available ACR registries:"
+          az acr list --output table || echo "No ACR found"
+
       - name: Generate tags
         id: tags
         run: |
