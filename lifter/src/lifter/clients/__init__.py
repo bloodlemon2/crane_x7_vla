@@ -8,6 +8,7 @@ SSH/SCP操作とSlurmコマンドのラッパーを提供する。
 from lifter.clients.slurm import (
     JobInfo,
     JobMonitor,
+    LogLine,
     SlurmClient,
     SlurmError,
 )
@@ -20,4 +21,5 @@ __all__ = [
     "SlurmError",
     "JobInfo",
     "JobMonitor",
+    "LogLine",
 ]

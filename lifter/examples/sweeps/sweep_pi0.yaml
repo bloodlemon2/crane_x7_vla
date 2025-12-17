@@ -14,7 +14,7 @@
 # Sweep基本設定
 method: bayes  # 探索方法: bayes, grid, random
 metric:
-  name: eval/loss
+  name: train/loss
   goal: minimize
 
 # エージェントが実行するコマンド
