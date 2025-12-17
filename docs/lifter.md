@@ -300,6 +300,72 @@ parameters:
     values: [16, 32, 64]
 ```
 
+## テンプレート機能
+
+lifterはJinja2ベースのテンプレートエンジンを使用しており、ジョブスクリプト内で環境変数の展開、条件分岐、デフォルト値の設定が可能です。
+
+### 基本的な変数展開
+
+`.env`ファイルで定義した変数をスクリプト内で使用できます。
+
+```bash
+# .env
+GPU_TYPE=a100
+NUM_GPUS=2
+EXPERIMENT_NAME=crane_x7_v1
+
+# job.sh
+#!/bin/bash
+#SBATCH --gres=gpu:{{ GPU_TYPE }}:{{ NUM_GPUS }}
+
+echo "Starting experiment: {{ EXPERIMENT_NAME }}"
+```
+
+### 条件分岐
+
+```bash
+{% if GPU_TYPE %}
+#SBATCH --gres=gpu:{{ GPU_TYPE }}:{{ NUM_GPUS | default(1) }}
+{% else %}
+# CPUモードで実行
+{% endif %}
+```
+
+### デフォルト値
+
+変数が未定義の場合のデフォルト値を指定できます。
+
+```bash
+#SBATCH --mem={{ MEM | default('32G') }}
+#SBATCH --cpus-per-task={{ CPUS | default(8) }}
+```
+
+### フィルタ
+
+Jinja2の組み込みフィルタが使用できます。
+
+```bash
+# 大文字/小文字変換
+echo "GPU: {{ GPU_TYPE | upper }}"
+echo "user: {{ USER | lower }}"
+```
+
+### Sweep用テンプレート
+
+W&B Sweep実行時には、自動的に以下の変数が利用可能です：
+
+- `SWEEP_ID`: W&B Sweep ID
+- `RUN_NUMBER`: Sweep内での実行番号
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=sweep_{{ SWEEP_ID[:8] }}_{{ RUN_NUMBER }}
+
+python -m crane_x7_vla.training.cli agent openvla \
+  --sweep-id {{ SWEEP_ID }} \
+  --count 1
+```
+
 ## ジョブスクリプト例
 
 ### 基本的なトレーニングジョブ

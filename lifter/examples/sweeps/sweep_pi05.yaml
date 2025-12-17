@@ -58,7 +58,7 @@ parameters:
 
   # 勾配累積ステップ (実効バッチサイズ = batch_size * gradient_accumulation_steps)
   gradient_accumulation_steps:
-    values: [2, 4, 8, 16]
+    values: [2, 4, 8, 16, 32]
 
   # Flow Matching デノイズステップ
   num_denoise_steps:

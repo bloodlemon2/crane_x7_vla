@@ -12,7 +12,6 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,7 +23,7 @@ from lifter.config import SlurmConfig
 from lifter.core.console import console
 from lifter.ui.monitor import MonitorDisplayBuilder, MonitorState
 from lifter.ui.status_table import print_job_status_table
-from lifter.utils import parse_job_id
+from lifter.utils import format_duration_timer, parse_job_id
 
 if TYPE_CHECKING:
     pass
@@ -32,16 +31,6 @@ if TYPE_CHECKING:
 
 class SlurmError(Exception):
     """Slurm操作に関するエラー."""
-
-
-def _format_duration(seconds: float) -> str:
-    """秒数を読みやすい形式に変換."""
-    duration = timedelta(seconds=int(seconds))
-    hours, remainder = divmod(int(duration.total_seconds()), 3600)
-    minutes, secs = divmod(remainder, 60)
-    if hours > 0:
-        return f"{hours:d}:{minutes:02d}:{secs:02d}"
-    return f"{minutes:d}:{secs:02d}"
 
 
 @dataclass
@@ -116,7 +105,7 @@ class JobMonitor:
     @property
     def elapsed_time(self) -> str:
         """経過時間を取得."""
-        return _format_duration(time.time() - self.start_time)
+        return format_duration_timer(time.time() - self.start_time)
 
     def add_log_lines(self, lines: list[str], is_stderr: bool = False) -> None:
         """ログ行を追加."""
