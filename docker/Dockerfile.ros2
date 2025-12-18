@@ -68,6 +68,9 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 WORKDIR /workspace
 
 # Install PyTorch with CUDA support (cu126 for CUDA 12.6)
+# Remove distutils-installed sympy to avoid conflict with PyTorch dependencies
+RUN rm -rf /usr/lib/python3/dist-packages/sympy* && \
+    rm -rf /usr/lib/python3/dist-packages/mpmath*
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
@@ -125,6 +128,8 @@ CMD ["bash"]
 
 # Development Stage: Additional dev tools
 FROM base AS dev
+
+USER root
 
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip3 install \
