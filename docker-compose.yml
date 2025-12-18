@@ -244,32 +244,6 @@ services:
           $$CAMERA_ARGS
 
   # --------------------------------------------------------------------------
-  # Gemini Services
-  # --------------------------------------------------------------------------
-  gemini-real:
-    <<: *base
-    profiles: [gemini]
-    devices:
-      - "$USB_DEVICE:/dev/ttyUSB0"
-      - "/dev/snd:/dev/snd"
-      - "/dev/bus/usb:/dev/bus/usb"
-    privileged: true
-    group_add: *real-groups
-    environment:
-      <<: *base-env
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-    command: ros2 launch crane_x7_bringup gemini_real.launch.py
-
-  gemini-sim:
-    <<: *base
-    profiles: [gemini-sim]
-    environment:
-      <<: *base-env
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      SIMULATION_MODE: "true"
-    command: ros2 launch crane_x7_bringup gemini_sim.launch.py
-
-  # --------------------------------------------------------------------------
   # VLA Inference Services
   # --------------------------------------------------------------------------
   vla-real:

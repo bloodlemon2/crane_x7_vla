@@ -26,12 +26,6 @@ docker compose --profile teleop up
 # テレオペレーション + カメラ + データロガー
 docker compose --profile log up
 
-# Gemini API統合（実機）
-docker compose --profile gemini up
-
-# Gemini API統合（シミュレーション）
-docker compose --profile gemini-sim up
-
 # VLA推論（実機）
 docker compose --profile vla up
 
@@ -248,7 +242,6 @@ crane_x7_vla/
 │       ├── crane_x7_log/          # データロギング（RLDS/TFRecord）
 │       ├── crane_x7_teleop/       # テレオペレーション
 │       ├── crane_x7_vla/          # VLA推論ノード
-│       ├── crane_x7_gemini/       # Gemini API統合
 │       ├── crane_x7_sim_gazebo/   # カスタムGazebo環境
 │       ├── crane_x7_lift/         # 統一シミュレータROS 2インターフェース
 │       └── crane_x7_bringup/      # 統合launchファイル
@@ -325,8 +318,6 @@ crane_x7_vla/
 | `sim.launch.py` | Gazeboシミュレーション + ロガー |
 | `teleop.launch.py` | テレオペ（リーダー + フォロワー） |
 | `data_collection.launch.py` | カメラ + データロガー（テレオペと併用） |
-| `gemini_real.launch.py` | Gemini API（実機） |
-| `gemini_sim.launch.py` | Gemini API（シミュレーション） |
 | `vla_real.launch.py` | VLA推論（実機） |
 | `vla_sim.launch.py` | VLA推論（Gazebo） |
 | `rosbridge_real.launch.py` | 実機 + rosbridge（リモートVLA用） |
@@ -352,7 +343,6 @@ ros2 launch crane_x7_bringup data_collection.launch.py  # カメラ+ロガー（
 | crane_x7_teleop | `teleop_follower.launch.py` | フォロワーノード単体 |
 | crane_x7_vla | `vla_control.launch.py` | VLAノード群 |
 | crane_x7_vla | `vla_inference_only.launch.py` | 推論ノードのみ（リモートGPU用） |
-| crane_x7_gemini | `trajectory_planner.launch.py` | Geminiプランナーノード |
 | crane_x7_sim_gazebo | `pick_and_place.launch.py` | Gazebo環境 |
 | crane_x7_lift | `sim.launch.py` | Lift統一シミュレータ |
 
@@ -372,7 +362,6 @@ ros2 launch crane_x7_bringup data_collection.launch.py  # カメラ+ロガー（
 - [docs/sim.md](docs/sim.md) - Liftシミュレータ抽象化
 - [docs/lifter.md](docs/lifter.md) - lifter (Slurmジョブ投下ツール)
 - [docs/lerobot.md](docs/lerobot.md) - LeRobot統合
-- [docs/gemini.md](docs/gemini.md) - Gemini API統合
 
 ## 注意事項
 
