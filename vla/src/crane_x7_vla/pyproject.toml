@@ -123,6 +123,16 @@ unfixable = []
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
 "tests/*" = ["ARG001", "ARG002"]  # Allow unused arguments in tests
+# transformers_replace is copied from HuggingFace transformers library
+# These files need to maintain compatibility with upstream code
+"backends/pi0/models_pytorch/transformers_replace/*" = [
+    "RUF012",  # Mutable class attributes (transformers pattern)
+    "TC003",   # Type-checking imports (transformers pattern)
+    "ARG004",  # Unused static method arguments (API compatibility)
+    "E741",    # Ambiguous variable names (upstream code)
+    "UP038",   # isinstance union types (Python 3.9 compat)
+    "RUF005",  # Collection concatenation (upstream pattern)
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["crane_x7_vla"]

@@ -6,10 +6,6 @@
 #
 # Based on PaliGemma + Expert Gemma architecture with flow matching
 # Pi0.5 adds adaRMSNorm and discrete state tokens
-
-# No additional packages needed beyond base requirements
-# Pi0 uses PyTorch-native implementations:
-# - torch (base)
-# - transformers (base)
-# - accelerate (base)
-# - einops (base)
+#
+# IMPORTANT: Pi0 requires transformers_replace to be installed.
+# See Dockerfile for the installation process.

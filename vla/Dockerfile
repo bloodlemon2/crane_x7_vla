@@ -147,6 +147,12 @@ RUN mkdir -p /workspace/vla /workspace/data /workspace/checkpoints /workspace/lo
 COPY --chown=root:root src/crane_x7_vla/ /workspace/vla/src/crane_x7_vla/
 COPY --chown=root:root configs/ /workspace/vla/configs/
 
+# Install transformers_replace for Pi0/Pi0.5 (OpenPI compatibility)
+# This patches transformers with custom GemmaRMSNorm (adaRMS support) and
+# eager_attention_forward (joint layer-by-layer attention)
+RUN cp -r /workspace/vla/src/crane_x7_vla/backends/pi0/models_pytorch/transformers_replace/* \
+    /usr/local/lib/python${PYTHON_VERSION}/dist-packages/transformers/
+
 # GPU optimization settings and PYTHONPATH
 ENV CUDA_LAUNCH_BLOCKING=0 \
     TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 9.0" \
