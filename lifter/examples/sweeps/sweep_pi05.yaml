@@ -15,7 +15,7 @@
 # Sweep基本設定
 method: bayes  # 探索方法: bayes, grid, random
 metric:
-  name: eval/loss
+  name: train/loss
   goal: minimize
 
 # エージェントが実行するコマンド
@@ -38,7 +38,7 @@ parameters:
 
   # バッチサイズ (Pi0.5はメモリ使用量が高いため小さめ)
   batch_size:
-    values: [1, 2]
+    values: [1]
 
   # 重み減衰 (対数スケール)
   weight_decay:
@@ -58,7 +58,7 @@ parameters:
 
   # 勾配累積ステップ (実効バッチサイズ = batch_size * gradient_accumulation_steps)
   gradient_accumulation_steps:
-    values: [2, 4, 8, 16]
+    values: [2, 4, 8, 16, 32]
 
   # Flow Matching デノイズステップ
   num_denoise_steps:

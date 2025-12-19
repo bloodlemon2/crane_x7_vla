@@ -9,6 +9,7 @@ from lifter.core.cli_utils import (
 )
 from lifter.core.console import console
 from lifter.core.exceptions import CLIError, ConfigError
+from lifter.core.monitor import BaseJobMonitor, LogLine
 
 __all__ = [
     "console",
@@ -17,4 +18,6 @@ __all__ = [
     "load_settings_with_error",
     "CLIError",
     "ConfigError",
+    "BaseJobMonitor",
+    "LogLine",
 ]

@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright 2025 nop
-"""Sweepテンプレート処理.
+"""Jinja2ベースのテンプレート処理.
 
 ジョブテンプレートのプレースホルダ展開を行う。
+Jinja2を使用し、条件分岐、ループ、デフォルト値などをサポート。
 """
 
 from __future__ import annotations
@@ -10,7 +11,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
+
+from jinja2 import Environment, StrictUndefined, UndefinedError
 
 from lifter.config import load_env_vars
 from lifter.core.console import console
@@ -52,9 +55,17 @@ class TemplateContext:
 
 
 class TemplateProcessor:
-    """テンプレートプロセッサ.
+    """Jinja2テンプレートプロセッサ.
 
-    {{KEY}}形式のプレースホルダを展開する。
+    Jinja2を使用してテンプレートを展開する。
+    {{ KEY }} 形式のプレースホルダをサポート。
+    従来の {{KEY}} 形式（スペースなし）も自動変換される。
+
+    機能:
+    - 条件分岐: {% if VAR %}...{% endif %}
+    - ループ: {% for item in items %}...{% endfor %}
+    - デフォルト値: {{ VAR | default('value') }}
+    - フィルタ: {{ VAR | upper }}, {{ VAR | lower }}
     """
 
     # 自動的に提供される変数
@@ -69,15 +80,44 @@ class TemplateProcessor:
 
         Args:
             template_content: テンプレート内容
-            strict: True の場合、未展開プレースホルダでエラー
+            strict: True の場合、未定義変数でエラー
         """
-        self.template_content = template_content
         self.strict = strict
+        # 従来の {{VAR}} 形式を {{ VAR }} に変換（後方互換性）
+        self.template_content = self._normalize_placeholders(template_content)
+        self._env = self._create_jinja_env()
         self._placeholders = self._extract_placeholders()
 
+    def _normalize_placeholders(self, content: str) -> str:
+        """従来の {{VAR}} 形式を {{ VAR }} 形式に変換.
+
+        Jinja2は {{ VAR }} 形式を期待するため、
+        スペースなしの {{VAR}} を変換する。
+
+        Args:
+            content: テンプレート内容
+
+        Returns:
+            正規化されたテンプレート
+        """
+        # {{VAR}} を {{ VAR }} に変換（既にスペースがある場合はスキップ）
+        # ただし、Jinja2の制御構文 {%...%} は変換しない
+        return re.sub(r"\{\{(\w+)\}\}", r"{{ \1 }}", content)
+
+    def _create_jinja_env(self) -> Environment:
+        """Jinja2環境を作成."""
+        if self.strict:
+            return Environment(undefined=StrictUndefined)
+        return Environment()
+
     def _extract_placeholders(self) -> set[str]:
-        """テンプレート内のプレースホルダを抽出."""
-        return set(re.findall(r"\{\{(\w+)\}\}", self.template_content))
+        """テンプレート内のプレースホルダを抽出.
+
+        Jinja2の変数参照を抽出する。
+        """
+        # {{ VAR }} または {{ VAR | filter }} 形式を抽出
+        pattern = r"\{\{\s*(\w+)(?:\s*\|[^}]*)?\s*\}\}"
+        return set(re.findall(pattern, self.template_content))
 
     @property
     def placeholders(self) -> set[str]:
@@ -106,27 +146,56 @@ class TemplateProcessor:
             展開されたスクリプト
 
         Raises:
-            TemplateError: strict=Trueで未展開変数がある場合
+            TemplateError: strict=Trueで未定義変数がある場合
         """
-        script = self.template_content
+        # コンテキスト変数を構築
+        variables: dict[str, Any] = {
+            "SWEEP_ID": context.sweep_id,
+            "RUN_NUMBER": context.run_number,
+            **context.env_vars,
+        }
 
-        # ビルトイン変数を展開
-        script = script.replace("{{SWEEP_ID}}", context.sweep_id)
-        script = script.replace("{{RUN_NUMBER}}", str(context.run_number))
-
-        # 環境変数を展開
-        for key, value in context.env_vars.items():
-            script = script.replace(f"{{{{{key}}}}}", value)
-
-        # 未展開プレースホルダをチェック
-        remaining = set(re.findall(r"\{\{(\w+)\}\}", script))
-        if remaining:
+        try:
+            template = self._env.from_string(self.template_content)
+            return template.render(**variables)
+        except UndefinedError as e:
             if self.strict:
-                raise TemplateError(f"未展開のプレースホルダがあります: {remaining}")
-            console.print(f"[yellow]警告: 未展開のプレースホルダ: {remaining}[/yellow]")
-            console.print("[yellow].envファイルにこれらの変数を定義してください[/yellow]")
+                raise TemplateError(f"未定義の変数: {e}") from e
+            # strict=Falseの場合は警告のみ
+            console.print(f"[yellow]警告: {e}[/yellow]")
+            # 未定義変数を空文字列に置換して再試行
+            env_lenient = Environment()
+            template = env_lenient.from_string(self.template_content)
+            return template.render(**variables)
 
-        return script
+
+def render_template(
+    template_content: str,
+    env_vars: dict[str, str] | None = None,
+    strict: bool = False,
+    **extra_vars: str,
+) -> str:
+    """テンプレートをレンダリング（簡易関数）.
+
+    Args:
+        template_content: テンプレート内容
+        env_vars: 環境変数辞書
+        strict: 未定義変数でエラーにするか
+        **extra_vars: 追加の変数
+
+    Returns:
+        レンダリングされた文字列
+    """
+    all_vars = dict(env_vars or {})
+    all_vars.update(extra_vars)
+
+    processor = TemplateProcessor(template_content, strict=strict)
+    context = TemplateContext(
+        sweep_id="",
+        run_number=0,
+        env_vars=all_vars,
+    )
+    return processor.render(context)
 
 
 def create_template_job_generator(
@@ -140,7 +209,7 @@ def create_template_job_generator(
     Args:
         template_path: テンプレートファイルパス
         env_file: 環境変数ファイルパス
-        strict: 未展開変数でエラーにするか
+        strict: 未定義変数でエラーにするか
         extra_vars: 追加の変数（.envより優先）
 
     Returns:

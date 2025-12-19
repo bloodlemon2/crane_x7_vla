@@ -7,7 +7,6 @@ typerを使用したコマンドラインインターフェース。
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Annotated
 
@@ -17,6 +16,7 @@ from lifter import __version__
 from lifter.clients import SlurmError
 from lifter.config import load_env_vars
 from lifter.core import console, create_clients, load_settings_with_error
+from lifter.sweep.template import render_template
 
 app = typer.Typer(
     name="lifter",
@@ -36,6 +36,9 @@ def version_callback(value: bool) -> None:
 def _process_template(script_content: str, env_file: Path) -> str:
     """テンプレート内のプレースホルダを環境変数で置換.
 
+    Jinja2ベースのテンプレートエンジンを使用。
+    条件分岐、ループ、デフォルト値などをサポート。
+
     Args:
         script_content: スクリプト内容
         env_file: 環境変数ファイルパス
@@ -43,29 +46,9 @@ def _process_template(script_content: str, env_file: Path) -> str:
     Returns:
         置換後のスクリプト内容
     """
-    # プレースホルダをチェック
-    placeholders = set(re.findall(r"\{\{(\w+)\}\}", script_content))
-    if not placeholders:
-        return script_content
-
-    console.print(f"[dim]テンプレート内のプレースホルダ: {placeholders}[/dim]")
-
-    # 環境変数を読み込む
     env_vars = load_env_vars(env_file)
     console.print(f"[dim].envから {len(env_vars)} 個の変数を読み込みました[/dim]")
-
-    # プレースホルダを置換
-    result = script_content
-    for key, value in env_vars.items():
-        result = result.replace(f"{{{{{key}}}}}", value)
-
-    # 未置換のプレースホルダをチェック
-    remaining = set(re.findall(r"\{\{(\w+)\}\}", result))
-    if remaining:
-        console.print(f"[yellow]警告: 未置換のプレースホルダ: {remaining}[/yellow]")
-        console.print("[yellow].envファイルにこれらの変数を定義してください[/yellow]")
-
-    return result
+    return render_template(script_content, env_vars, strict=False)
 
 
 @app.callback()

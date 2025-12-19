@@ -25,7 +25,8 @@ CRANE-X7ロボットアームとVLAを使用した制御プログラムです。
 | [docs/sim.md](docs/sim.md) | Liftシミュレータ抽象化（ManiSkill、Genesis） |
 | [docs/lerobot.md](docs/lerobot.md) | LeRobot統合（ACT、Diffusion Policy） |
 | [docs/gemini.md](docs/gemini.md) | Gemini API統合 |
-| [docs/slurm.md](docs/slurm.md) | Slurmジョブ投下ツール |
+| [docs/remote.md](docs/remote.md) | リモートGPU推論・VLA-RLトレーニング（Vast.ai、Runpod） |
+| [docs/lifter.md](docs/lifter.md) | lifter（Slurmジョブ投下ツール、W&B Sweep） |
 
 ## ディレクトリ構成
 
@@ -36,7 +37,7 @@ CRANE-X7ロボットアームとVLAを使用した制御プログラムです。
 | `vla-rl/` | VLA強化学習。SimpleVLA-RL方式でPPOを使用したVLAモデルのファインチューニング。 |
 | `sim/` | Liftシミュレータ統合。ManiSkill、Genesisなど複数シミュレータの統一抽象化レイヤー。 |
 | `lerobot/` | LeRobot統合。CRANE-X7用のRobotプラグイン、Teleoperatorプラグイン、ACT/Diffusionポリシー設定を含む。 |
-| `slurm/` | Slurmクラスター向けジョブ投下ツール。W&B Sweepによるハイパーパラメータ探索もサポート。 |
+| `lifter/` | Slurmクラスター向けジョブ投下ツール。W&B Sweepによるハイパーパラメータ探索、ローカル実行もサポート。 |
 
 ## 必要なもの
 

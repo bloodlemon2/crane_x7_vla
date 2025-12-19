@@ -75,6 +75,23 @@ def format_duration(seconds: int) -> str:
     return " ".join(parts)
 
 
+def format_duration_timer(seconds: float) -> str:
+    """秒数をタイマー形式にフォーマット.
+
+    Args:
+        seconds: 秒数
+
+    Returns:
+        "H:MM:SS" または "M:SS" 形式の文字列
+    """
+    total_seconds = int(seconds)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:d}:{secs:02d}"
+
+
 def truncate_string(s: str, max_length: int = 80, suffix: str = "...") -> str:
     """文字列を最大長で切り詰め.
 

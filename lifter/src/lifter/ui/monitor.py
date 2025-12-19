@@ -17,7 +17,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 if TYPE_CHECKING:
-    from lifter.clients.slurm import JobInfo
+    from lifter.clients.slurm import JobInfo, LogLine
 
 
 def get_terminal_log_lines() -> int:
@@ -41,14 +41,14 @@ class MonitorState:
         state: ジョブの状態
         slurm_time: Slurmで報告された実行時間
         elapsed_time: 監視開始からの経過時間
-        log_lines: 表示するログ行
+        log_lines: 表示するログ行（LogLineオブジェクトのdeque）
     """
 
     job_id: str
     state: str = "UNKNOWN"
     slurm_time: str = "0:00"
     elapsed_time: str = "0:00"
-    log_lines: deque = field(default_factory=lambda: deque(maxlen=100))
+    log_lines: deque[LogLine] = field(default_factory=lambda: deque(maxlen=100))
 
 
 class MonitorDisplayBuilder:
@@ -139,20 +139,23 @@ class MonitorDisplayBuilder:
             height=panel_height,
         )
 
-    def _format_log_lines(self, lines: list[str], max_width: int) -> Text:
+    def _format_log_lines(self, lines: list[LogLine], max_width: int) -> Text:
         """ログ行をフォーマット.
 
         Args:
-            lines: ログ行のリスト
+            lines: LogLineオブジェクトのリスト
             max_width: 最大幅
 
         Returns:
             フォーマットされたText
         """
         log_text = Text()
-        for i, line in enumerate(lines):
-            display_line = line[: max_width - 3] + "..." if len(line) > max_width else line
-            log_text.append(display_line)
+        for i, log_line in enumerate(lines):
+            text = log_line.text
+            display_line = text[: max_width - 3] + "..." if len(text) > max_width else text
+            # stderr は黄色で表示
+            style = "yellow" if log_line.is_stderr else None
+            log_text.append(display_line, style=style)
             if i < len(lines) - 1:
                 log_text.append("\n")
         return log_text

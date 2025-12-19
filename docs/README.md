@@ -35,7 +35,7 @@ CRANE-X7ロボットアームの制御とVLAファインチューニングのた
 
 | ドキュメント | 説明 |
 |-------------|------|
-| [slurm.md](slurm.md) | Slurmジョブ投下ツール（W&B Sweep連携） |
+| [lifter.md](lifter.md) | lifter（Slurmジョブ投下ツール、W&B Sweep連携） |
 
 ## クイックスタート
 
@@ -58,7 +58,7 @@ docker compose --profile sim up
 
 ```bash
 cd vla
-docker build -f Dockerfile.openvla -t crane_x7_vla_openvla .
+docker build -t crane_x7_vla .
 # コンテナ内でトレーニング実行
 ```
 

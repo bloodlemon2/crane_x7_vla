@@ -37,6 +37,7 @@ dependencies = [
     "wandb>=0.15",
     "pyyaml>=6.0",
     "rich>=13.0",
+    "jinja2>=3.0",
 ]
 
 [project.optional-dependencies]

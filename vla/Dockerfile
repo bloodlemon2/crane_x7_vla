@@ -37,12 +37,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} \
     python${PYTHON_VERSION}-dev \
     python${PYTHON_VERSION}-venv \
-    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python version
+# Set Python version and install pip for Python 3.12+
+# Note: python3-pip installs pip for system Python (3.10), not for deadsnakes Python
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1
+    && update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION}
 
 WORKDIR /build
 
@@ -112,7 +113,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} \
     python${PYTHON_VERSION}-venv \
-    python3-pip \
     libgomp1 \
     libglib2.0-0 \
     libsm6 \
@@ -123,9 +123,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Set Python version
+# Set Python version and install pip for Python 3.12+
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1
+    && update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION}
 
 WORKDIR /workspace/vla
 

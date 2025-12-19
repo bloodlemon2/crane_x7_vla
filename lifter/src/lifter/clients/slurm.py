@@ -12,7 +12,6 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,7 +23,7 @@ from lifter.config import SlurmConfig
 from lifter.core.console import console
 from lifter.ui.monitor import MonitorDisplayBuilder, MonitorState
 from lifter.ui.status_table import print_job_status_table
-from lifter.utils import parse_job_id
+from lifter.utils import format_duration_timer, parse_job_id
 
 if TYPE_CHECKING:
     pass
@@ -32,16 +31,6 @@ if TYPE_CHECKING:
 
 class SlurmError(Exception):
     """Slurm操作に関するエラー."""
-
-
-def _format_duration(seconds: float) -> str:
-    """秒数を読みやすい形式に変換."""
-    duration = timedelta(seconds=int(seconds))
-    hours, remainder = divmod(int(duration.total_seconds()), 3600)
-    minutes, secs = divmod(remainder, 60)
-    if hours > 0:
-        return f"{hours:d}:{minutes:02d}:{secs:02d}"
-    return f"{minutes:d}:{secs:02d}"
 
 
 @dataclass
@@ -94,27 +83,36 @@ class JobInfo:
 
 
 @dataclass
+class LogLine:
+    """ログ行."""
+
+    text: str
+    is_stderr: bool = False
+
+
+@dataclass
 class JobMonitor:
     """ジョブ監視状態を管理."""
 
     job_id: str
     start_time: float = field(default_factory=time.time)
     log_lines: deque = field(default_factory=lambda: deque(maxlen=100))
-    last_log_offset: int = 0
+    last_stdout_offset: int = 0
+    last_stderr_offset: int = 0
     state: str = "UNKNOWN"
     slurm_time: str = "0:00"
 
     @property
     def elapsed_time(self) -> str:
         """経過時間を取得."""
-        return _format_duration(time.time() - self.start_time)
+        return format_duration_timer(time.time() - self.start_time)
 
-    def add_log_lines(self, lines: list[str]) -> None:
+    def add_log_lines(self, lines: list[str], is_stderr: bool = False) -> None:
         """ログ行を追加."""
         for line in lines:
             stripped = line.rstrip()
             if stripped:
-                self.log_lines.append(stripped)
+                self.log_lines.append(LogLine(text=stripped, is_stderr=is_stderr))
 
 
 class SlurmClient:
@@ -499,12 +497,13 @@ class SlurmClient:
         monitor = JobMonitor(job_id=job_id)
         last_state_check = 0.0
         last_log_check = 0.0
-        log_path: str | None = None
+        stdout_path: str | None = None
+        stderr_path: str | None = None
         cached_job_info: JobInfo | None = None
 
         def update_display(live: Live) -> str | None:
             """表示を更新し、終了状態があれば返す."""
-            nonlocal last_state_check, last_log_check, log_path, cached_job_info
+            nonlocal last_state_check, last_log_check, stdout_path, stderr_path, cached_job_info
 
             current_time = time.time()
             final_state: str | None = None
@@ -532,8 +531,12 @@ class SlurmClient:
                         callback(cached_job_info, state)
 
                     # ログファイルパスを取得（RUNNINGになったら）
-                    if state in ("RUNNING", "R") and log_path is None and show_log:
-                        log_path = self.get_job_output_file(job_id)
+                    if state in ("RUNNING", "R") and stdout_path is None and show_log:
+                        stdout_path = self.get_job_output_file(job_id)
+                        stderr_path = self.get_job_error_file(job_id)
+                        # stdout と stderr が同じ場合は stderr を監視しない
+                        if stderr_path == stdout_path:
+                            stderr_path = None
 
                 # 完了判定
                 if state is None or state in ("COMPLETED", "CD"):
@@ -548,14 +551,24 @@ class SlurmClient:
                     final_state = "NODE_FAIL"
 
             # ログチェック（より頻繁に）
-            if show_log and log_path and current_time - last_log_check >= log_poll_interval:
+            if show_log and current_time - last_log_check >= log_poll_interval:
                 last_log_check = current_time
-                new_lines, new_offset = self.get_log_tail(
-                    log_path, monitor.last_log_offset, max_lines=100
-                )
-                if new_lines:
-                    monitor.add_log_lines(new_lines)
-                    monitor.last_log_offset = new_offset
+                # stdout を監視
+                if stdout_path:
+                    new_lines, new_offset = self.get_log_tail(
+                        stdout_path, monitor.last_stdout_offset, max_lines=100
+                    )
+                    if new_lines:
+                        monitor.add_log_lines(new_lines, is_stderr=False)
+                        monitor.last_stdout_offset = new_offset
+                # stderr を監視
+                if stderr_path:
+                    new_lines, new_offset = self.get_log_tail(
+                        stderr_path, monitor.last_stderr_offset, max_lines=100
+                    )
+                    if new_lines:
+                        monitor.add_log_lines(new_lines, is_stderr=True)
+                        monitor.last_stderr_offset = new_offset
 
             # 毎回表示を更新（経過時間のため）
             live.update(self._build_monitor_display(monitor, cached_job_info))
@@ -588,7 +601,7 @@ class SlurmClient:
                         console.print(
                             f"\n[bold red]✗ ジョブ {job_id} が失敗しました ({final_state})[/bold red]"
                         )
-                        self._print_error_details(job_id, log_path)
+                        self._print_error_details(job_id, stdout_path)
                     elif final_state == "CANCELLED":
                         console.print(
                             f"\n[bold yellow]! ジョブ {job_id} がキャンセルされました[/bold yellow]"
