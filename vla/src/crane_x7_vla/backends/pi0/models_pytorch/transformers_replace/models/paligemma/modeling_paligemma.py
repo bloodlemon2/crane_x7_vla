@@ -25,7 +25,22 @@ from ...modeling_flash_attention_utils import FlashAttentionKwargs
 from ...modeling_outputs import BaseModelOutputWithPast
 from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
-from ...utils import LossKwargs, ModelOutput, auto_docstring, can_return_tuple, is_torchdynamo_compiling, logging
+from ...utils import ModelOutput, auto_docstring, can_return_tuple, is_torchdynamo_compiling, logging
+
+
+# LossKwargs is only available in transformers v5.0+
+# Define a placeholder for compatibility with transformers 4.x
+try:
+    from ...utils import LossKwargs
+except ImportError:
+    from typing import TypedDict
+
+    class LossKwargs(TypedDict, total=False):
+        """Placeholder for LossKwargs (transformers v5.0+ feature)."""
+
+        labels: "torch.Tensor"
+
+
 from ..auto import AutoModel
 from .configuration_paligemma import PaliGemmaConfig
 
