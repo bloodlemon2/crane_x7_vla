@@ -67,12 +67,12 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 
 WORKDIR /workspace
 
-# Install PyTorch with CUDA support (cu126 for CUDA 12.6)
+# Install PyTorch with CUDA support (cu128 for CUDA 12.8)
 # Remove distutils-installed sympy to avoid conflict with PyTorch dependencies
 RUN rm -rf /usr/lib/python3/dist-packages/sympy* && \
     rm -rf /usr/lib/python3/dist-packages/mpmath*
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+    pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # Install Python dependencies
 # Note: numpy<2.0 constraint is specified first in requirements.txt to prevent

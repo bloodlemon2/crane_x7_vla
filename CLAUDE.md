@@ -301,7 +301,7 @@ crane_x7_vla/
 | Pi0 | ~2.3B | PaliGemma + Expert Gemma + Flow Matching | 実装済み |
 | Pi0.5 | ~2.3B | Pi0 + adaRMSNorm + Discrete State | 実装済み |
 
-共通環境: **CUDA 12.6** / **Python 3.11** / **PyTorch 2.9.1**
+共通環境: **CUDA 12.8** / **Python 3.11** / **PyTorch 2.9.1**
 
 ### データフォーマット
 

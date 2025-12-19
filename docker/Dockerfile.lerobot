@@ -5,7 +5,7 @@
 # LeRobot CRANE-X7 Environment
 # Build context: project root (crane_x7_vla/)
 
-ARG CUDA_VERSION=12.6.3
+ARG CUDA_VERSION=12.8.0
 ARG PYTHON_VERSION=3.11
 
 # Base Stage
@@ -62,9 +62,9 @@ WORKDIR /workspace
 # Dependencies Stage
 FROM base AS deps
 
-# Install PyTorch with CUDA support (cu126 for CUDA 12.6)
+# Install PyTorch with CUDA support (cu128 for CUDA 12.8)
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+    pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 # Install LeRobot with Dynamixel and RealSense support
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \

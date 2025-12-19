@@ -39,7 +39,22 @@ from ...modeling_outputs import (
 from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
-from ...utils import LossKwargs, auto_docstring, can_return_tuple, logging
+from ...utils import auto_docstring, can_return_tuple, logging
+
+
+# LossKwargs is only available in transformers v5.0+
+# Define a placeholder for compatibility with transformers 4.x
+try:
+    from ...utils import LossKwargs
+except ImportError:
+    from typing import TypedDict
+
+    class LossKwargs(TypedDict, total=False):
+        """Placeholder for LossKwargs (transformers v5.0+ feature)."""
+
+        labels: "torch.Tensor"
+
+
 from .configuration_gemma import GemmaConfig
 
 
