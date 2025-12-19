@@ -26,6 +26,10 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
     This class handles model loading and inference for Pi0 and Pi0.5 models,
     using flow matching ODE integration for action chunk prediction.
 
+    Features:
+    - Action chunk caching: Predicts multiple future actions, uses them sequentially
+    - Reduces inference frequency by reusing predicted actions
+
     Attributes:
         model_path: Path to the Pi0 model checkpoint
         device: PyTorch device for inference ('cuda' or 'cpu')
@@ -36,11 +40,15 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
     # CRANE-X7 specific settings
     CRANE_X7_ACTION_DIM = 8
 
+    # Action chunk caching settings
+    DEFAULT_CHUNK_USE_COUNT = 10  # Number of actions to use from each predicted chunk
+
     def __init__(
         self,
         model_path: str,
         device: str = 'cuda',
         logger: Optional[logging.Logger] = None,
+        chunk_use_count: int = DEFAULT_CHUNK_USE_COUNT,
     ):
         """Initialize Pi0 inference core.
 
@@ -48,11 +56,18 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             model_path: Path to model checkpoint directory
             device: Device for inference ('cuda' or 'cpu')
             logger: Optional logger instance
+            chunk_use_count: Number of actions to use from each predicted chunk
         """
         super().__init__(model_path, device, logger)
         self.config = None
         self.tokenizer = None
         self.norm_stats = None
+
+        # Action chunk caching
+        self._action_cache: Optional[np.ndarray] = None  # [horizon, action_dim]
+        self._cache_index: int = 0  # Current index in cached chunk
+        self._cache_instruction: Optional[str] = None  # Instruction for cached chunk
+        self._chunk_use_count: int = chunk_use_count  # Actions to use per chunk
 
     def load_model(self) -> bool:
         """Load Pi0/Pi0.5 model from checkpoint.
@@ -220,6 +235,11 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
     ) -> Optional[np.ndarray]:
         """Run Pi0 inference and return predicted action.
 
+        Uses action chunk caching to reduce inference frequency:
+        - Predicts multiple future actions at once
+        - Returns cached actions until chunk is exhausted
+        - Re-predicts when cache is empty or instruction changes
+
         Args:
             image: RGB image as numpy array (H, W, 3)
             instruction: Task instruction string
@@ -236,12 +256,20 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             self.logger.error('Tokenizer not loaded')
             return None
 
+        # Check if we can use cached action (fast path)
+        if self._can_use_cached_action(instruction):
+            action = self._get_cached_action(log_callback)
+            if log_callback:
+                log_callback(f'Final predicted action (cached): {action}')
+            return action
+
+        # Need to run inference (slow path)
         try:
             # Debug logging
             if log_callback:
                 image_hash = compute_image_hash(image)
                 log_callback(
-                    f'Pi0 inference: image_shape={image.shape}, '
+                    f'Pi0 inference (new prediction): image_shape={image.shape}, '
                     f'image_hash={image_hash:04d}, '
                     f'instruction="{instruction}"'
                 )
@@ -261,7 +289,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             # Prepare state (zero state for inference without prior state)
             state = self._prepare_state()
 
-            # Run flow matching inference (optimized: 5 steps instead of 10)
+            # Run flow matching inference
             action_chunk = self.model.sample_actions(
                 images=[image_tensor],
                 img_masks=[torch.tensor([True], device=self.device)],
@@ -271,21 +299,11 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
                 num_steps=self.config.get('num_denoise_steps', 5),
             )
 
-            # Extract first action from chunk and truncate to CRANE-X7 dims
-            raw_action = action_chunk[0, 0, :self.CRANE_X7_ACTION_DIM].cpu().numpy()
+            # Cache the action chunk for future use
+            self._cache_action_chunk(action_chunk, instruction, log_callback)
 
-            if log_callback:
-                log_callback(f'Raw model output (normalized): {raw_action}')
-
-            # Denormalize if stats available
-            if self.norm_stats:
-                action = self._denormalize_action(raw_action)
-                if log_callback:
-                    log_callback(f'Denormalized action: {action}')
-            else:
-                action = raw_action
-                if log_callback:
-                    log_callback('WARNING: No norm_stats - using raw action')
+            # Return the first action from cache
+            action = self._get_cached_action(log_callback)
 
             if log_callback:
                 log_callback(f'Final predicted action: {action}')
@@ -297,6 +315,85 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             import traceback
             self.logger.error(traceback.format_exc())
             return None
+
+    def _can_use_cached_action(self, instruction: str) -> bool:
+        """Check if we can use a cached action.
+
+        Cache is valid if:
+        1. Cache exists
+        2. Instruction matches
+        3. Cache index is within usable range
+
+        Args:
+            instruction: Current task instruction
+
+        Returns:
+            True if cached action can be used
+        """
+        if self._action_cache is None:
+            return False
+        if self._cache_instruction != instruction:
+            return False
+        if self._cache_index >= self._chunk_use_count:
+            return False
+        return True
+
+    def _get_cached_action(self, log_callback: Optional[LogCallback] = None) -> np.ndarray:
+        """Get the next action from cache.
+
+        Args:
+            log_callback: Optional callback for logging
+
+        Returns:
+            Action array from cache
+        """
+        action = self._action_cache[self._cache_index]
+        if log_callback:
+            log_callback(f'Using cached action [{self._cache_index}/{self._chunk_use_count}]')
+        self._cache_index += 1
+        return action
+
+    def _cache_action_chunk(
+        self,
+        action_chunk: torch.Tensor,
+        instruction: str,
+        log_callback: Optional[LogCallback] = None,
+    ) -> None:
+        """Cache a predicted action chunk.
+
+        Args:
+            action_chunk: Predicted action chunk [1, horizon, action_dim]
+            instruction: Instruction used for prediction
+            log_callback: Optional callback for logging
+        """
+        # Extract and denormalize all actions in chunk
+        raw_chunk = action_chunk[0, :, :self.CRANE_X7_ACTION_DIM].cpu().numpy()
+
+        # Denormalize each action
+        if self.norm_stats:
+            denorm_chunk = np.array([
+                self._denormalize_action(raw_chunk[i])
+                for i in range(raw_chunk.shape[0])
+            ])
+        else:
+            denorm_chunk = raw_chunk
+
+        self._action_cache = denorm_chunk
+        self._cache_index = 0
+        self._cache_instruction = instruction
+
+        if log_callback:
+            log_callback(f'Cached {len(denorm_chunk)} actions, will use {self._chunk_use_count}')
+
+    def invalidate_cache(self) -> None:
+        """Invalidate the action cache.
+
+        Call this when the task changes or robot state is reset.
+        """
+        self._action_cache = None
+        self._cache_index = 0
+        self._cache_instruction = None
+        self.logger.debug('Action cache invalidated')
 
     def _prepare_language(self, instruction: str) -> tuple:
         """Tokenize language instruction.
@@ -356,3 +453,30 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
     def is_loaded(self) -> bool:
         """Check if model is loaded and ready for inference."""
         return self.model is not None and self.tokenizer is not None
+
+    @property
+    def chunk_use_count(self) -> int:
+        """Number of actions to use from each predicted chunk."""
+        return self._chunk_use_count
+
+    @chunk_use_count.setter
+    def chunk_use_count(self, value: int) -> None:
+        """Set number of actions to use from each predicted chunk.
+
+        Args:
+            value: Number of actions (1-50, typically 5-20)
+        """
+        action_horizon = self.config.get('action_horizon', 50) if self.config else 50
+        self._chunk_use_count = max(1, min(value, action_horizon))
+        self.invalidate_cache()  # Clear cache when changing setting
+
+    @property
+    def cache_status(self) -> dict:
+        """Get current cache status for debugging."""
+        return {
+            'has_cache': self._action_cache is not None,
+            'cache_index': self._cache_index,
+            'chunk_use_count': self._chunk_use_count,
+            'cache_instruction': self._cache_instruction,
+            'remaining_actions': max(0, self._chunk_use_count - self._cache_index) if self._action_cache is not None else 0,
+        }

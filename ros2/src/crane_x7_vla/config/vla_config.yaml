@@ -23,7 +23,7 @@ vla_inference_node:
     action_topic: '/vla/predicted_action'  # Output action topic
 
     # Inference settings
-    inference_rate: 10.0  # Inference frequency (Hz)
+    inference_rate: 10.0  # Inference frequency (Hz) - matches training data rate
     center_crop: false  # Apply center crop to images (if trained with augmentation)
 
 robot_controller:
@@ -37,7 +37,7 @@ robot_controller:
     gripper_controller_name: '/crane_x7_gripper_controller/gripper_cmd'
 
     # Execution settings
-    execution_time: 1.0  # Time to execute each action (seconds)
+    execution_time: 0.1  # Time to execute each action (seconds) - fast for simulation
     position_tolerance: 0.01  # Position tolerance for goal (radians)
     auto_execute: true  # Automatically execute received actions
 
