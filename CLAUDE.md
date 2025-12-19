@@ -26,12 +26,6 @@ docker compose --profile teleop up
 # テレオペレーション + カメラ + データロガー
 docker compose --profile log up
 
-# Gemini API統合（実機）
-docker compose --profile gemini up
-
-# Gemini API統合（シミュレーション）
-docker compose --profile gemini-sim up
-
 # VLA推論（実機）
 docker compose --profile vla up
 
@@ -236,10 +230,12 @@ crane_x7_vla/
 ├── docker/                        # Docker環境
 │   ├── Dockerfile.ros2            # ROS 2統合環境
 │   ├── Dockerfile.remote-inference # リモートGPU推論
+│   ├── Dockerfile.remote-vla-rl   # リモートVLA-RLトレーニング
 │   ├── Dockerfile.vla-rl          # VLA-RL学習
 │   ├── Dockerfile.lerobot         # LeRobot統合
 │   ├── entrypoint-ros2.sh         # ROS 2用エントリーポイント
 │   ├── entrypoint-remote-inference.sh # 推論用エントリーポイント
+│   ├── entrypoint-remote-vla-rl.sh # VLA-RL用エントリーポイント
 │   └── wait-for-peer.sh           # Tailscale待機スクリプト
 ├── ros2/                          # ROS 2ワークスペース
 │   └── src/
@@ -248,7 +244,7 @@ crane_x7_vla/
 │       ├── crane_x7_log/          # データロギング（RLDS/TFRecord）
 │       ├── crane_x7_teleop/       # テレオペレーション
 │       ├── crane_x7_vla/          # VLA推論ノード
-│       ├── crane_x7_gemini/       # Gemini API統合
+│       ├── crane_x7_gemini/       # Gemini API統合（物体検出、軌道プランニング）
 │       ├── crane_x7_sim_gazebo/   # カスタムGazebo環境
 │       ├── crane_x7_lift/         # 統一シミュレータROS 2インターフェース
 │       └── crane_x7_bringup/      # 統合launchファイル
@@ -265,9 +261,9 @@ crane_x7_vla/
 │   └── src/
 │       ├── lift/                  # 統一シミュレータインターフェース
 │       ├── robot/                 # 共有ロボットアセット（MJCF、メッシュ）
-│       ├── maniskill/             # ManiSkill実装
-│       ├── genesis/               # Genesis実装
-│       └── isaacsim/              # Isaac Sim実装（スケルトン）
+│       ├── lift_maniskill/        # ManiSkill実装
+│       ├── lift_genesis/          # Genesis実装
+│       └── lift_isaacsim/         # Isaac Sim実装（スケルトン）
 ├── vla-rl/                        # VLA強化学習（SimpleVLA-RL方式）
 │   ├── Dockerfile.vla-rl.example  # 参考用Dockerfile
 │   ├── configs/                   # 設定ファイル
@@ -286,7 +282,9 @@ crane_x7_vla/
 │   └── src/lifter/
 ├── data/                          # データ保存
 │   └── tfrecord_logs/             # 収集エピソード
-└── scripts/                       # ユーティリティ
+└── scripts/                       # ユーティリティスクリプト
+    ├── data/                      # データ処理スクリプト
+    └── update-instruction.sh      # タスク指示更新
 ```
 
 ## アーキテクチャ詳細
@@ -298,6 +296,7 @@ crane_x7_vla/
 | バックエンド | パラメータ | 特徴 | 状態 |
 |-------------|-----------|------|------|
 | OpenVLA | ~7B | Prismatic VLMベース | 実装済み |
+| OpenVLA-OFT | ~7B | L1 Regression + Action Chunking + FiLM | 実装済み |
 | MiniVLA | ~1B | Qwen 2.5 + VQ Action Chunking | 実装済み |
 | Pi0 | ~2.3B | PaliGemma + Expert Gemma + Flow Matching | 実装済み |
 | Pi0.5 | ~2.3B | Pi0 + adaRMSNorm + Discrete State | 実装済み |
@@ -325,10 +324,10 @@ crane_x7_vla/
 | `sim.launch.py` | Gazeboシミュレーション + ロガー |
 | `teleop.launch.py` | テレオペ（リーダー + フォロワー） |
 | `data_collection.launch.py` | カメラ + データロガー（テレオペと併用） |
-| `gemini_real.launch.py` | Gemini API（実機） |
-| `gemini_sim.launch.py` | Gemini API（シミュレーション） |
 | `vla_real.launch.py` | VLA推論（実機） |
 | `vla_sim.launch.py` | VLA推論（Gazebo） |
+| `gemini_real.launch.py` | Gemini API推論（実機） |
+| `gemini_sim.launch.py` | Gemini API推論（Gazebo） |
 | `rosbridge_real.launch.py` | 実機 + rosbridge（リモートVLA用） |
 | `rosbridge_sim.launch.py` | Gazebo + rosbridge（リモートVLA用） |
 | `lift.launch.py` | Liftシミュレーション（統一抽象化） |
@@ -352,7 +351,6 @@ ros2 launch crane_x7_bringup data_collection.launch.py  # カメラ+ロガー（
 | crane_x7_teleop | `teleop_follower.launch.py` | フォロワーノード単体 |
 | crane_x7_vla | `vla_control.launch.py` | VLAノード群 |
 | crane_x7_vla | `vla_inference_only.launch.py` | 推論ノードのみ（リモートGPU用） |
-| crane_x7_gemini | `trajectory_planner.launch.py` | Geminiプランナーノード |
 | crane_x7_sim_gazebo | `pick_and_place.launch.py` | Gazebo環境 |
 | crane_x7_lift | `sim.launch.py` | Lift統一シミュレータ |
 
@@ -366,13 +364,13 @@ ros2 launch crane_x7_bringup data_collection.launch.py  # カメラ+ロガー（
 
 - [docs/README.md](docs/README.md) - ドキュメントトップページ
 - [docs/ros2.md](docs/ros2.md) - ROS 2環境詳細
+- [docs/gemini.md](docs/gemini.md) - Gemini API統合（物体検出、軌道プランニング）
 - [docs/vla.md](docs/vla.md) - VLAファインチューニング詳細
 - [docs/vla-rl.md](docs/vla-rl.md) - VLA強化学習（SimpleVLA-RL方式）
 - [docs/remote.md](docs/remote.md) - リモートGPU推論・VLA-RLトレーニング（Vast.ai、Runpod）
 - [docs/sim.md](docs/sim.md) - Liftシミュレータ抽象化
 - [docs/lifter.md](docs/lifter.md) - lifter (Slurmジョブ投下ツール)
 - [docs/lerobot.md](docs/lerobot.md) - LeRobot統合
-- [docs/gemini.md](docs/gemini.md) - Gemini API統合
 
 ## 注意事項
 

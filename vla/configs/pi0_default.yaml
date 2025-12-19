@@ -67,7 +67,7 @@ pi0:
     # - right_wrist_0_rgb
 
   # Flow matching
-  num_denoise_steps: 10
+  num_denoise_steps: 5
 
   # Normalization
   normalize_actions: true

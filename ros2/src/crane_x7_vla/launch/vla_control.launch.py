@@ -6,6 +6,7 @@
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -21,6 +22,25 @@ def launch_setup(context, *args, **kwargs):
     device = LaunchConfiguration('device')
     auto_execute = LaunchConfiguration('auto_execute')
     image_topic = LaunchConfiguration('image_topic')
+    set_initial_position = LaunchConfiguration('set_initial_position')
+
+    nodes = []
+
+    # Initial position node (optional, runs first)
+    initial_position_node = Node(
+        package='crane_x7_vla',
+        executable='initial_position_node',
+        name='initial_position_node',
+        output='screen',
+        parameters=[
+            {
+                'execution_time': 3.0,
+                'position_tolerance': 0.05,
+            }
+        ],
+        condition=IfCondition(set_initial_position),
+    )
+    nodes.append(initial_position_node)
 
     # VLA inference node
     vla_inference_node = Node(
@@ -39,6 +59,7 @@ def launch_setup(context, *args, **kwargs):
             }
         ],
     )
+    nodes.append(vla_inference_node)
 
     # Robot controller node
     robot_controller_node = Node(
@@ -53,8 +74,9 @@ def launch_setup(context, *args, **kwargs):
             }
         ],
     )
+    nodes.append(robot_controller_node)
 
-    return [vla_inference_node, robot_controller_node]
+    return nodes
 
 
 def generate_launch_description():
@@ -106,6 +128,12 @@ def generate_launch_description():
         description='RGB image topic for VLA inference'
     )
 
+    declare_set_initial_position = DeclareLaunchArgument(
+        'set_initial_position',
+        default_value='true',
+        description='Move robot to initial position before VLA inference'
+    )
+
     return LaunchDescription([
         declare_model_path,
         declare_task_instruction,
@@ -114,5 +142,6 @@ def generate_launch_description():
         declare_device,
         declare_auto_execute,
         declare_image_topic,
+        declare_set_initial_position,
         OpaqueFunction(function=launch_setup)
     ])

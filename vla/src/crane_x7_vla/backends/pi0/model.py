@@ -4,11 +4,11 @@
 """
 Pi0/Pi0.5 Model Implementation.
 
-Based on OpenPI's pi0_pytorch.py implementation.
-Uses PaliGemma + Expert Gemma architecture with flow matching.
+Based on OpenPI's architecture with joint layer-by-layer attention between
+PaliGemma (VLM) and Expert Gemma (Action Expert).
 
 Key components:
-- PaliGemmaWithExpertModel: VLM + Action Expert
+- PaliGemmaWithExpertModel from models_pytorch/gemma_pytorch.py
 - Flow matching for action prediction
 - Support for both Pi0 (continuous state) and Pi0.5 (discrete state + adaRMSNorm)
 """
@@ -16,11 +16,13 @@ Key components:
 import logging
 import math
 from dataclasses import dataclass
-from typing import Literal
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+
+from .models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
+from .models_pytorch.pi0_pytorch import get_gemma_config
 
 
 logger = logging.getLogger(__name__)
@@ -37,66 +39,6 @@ class Pi0ModelConfig:
     action_horizon: int = 50
     max_token_len: int = 48
     dtype: str = "bfloat16"
-
-
-# =============================================================================
-# Gemma Configuration
-# =============================================================================
-
-
-@dataclass
-class GemmaConfig:
-    """Gemma model configuration."""
-
-    width: int
-    mlp_dim: int
-    num_heads: int
-    head_dim: int
-    depth: int
-    num_kv_heads: int
-
-
-GEMMA_CONFIGS: dict[str, GemmaConfig] = {
-    "gemma_2b": GemmaConfig(
-        width=2048,
-        mlp_dim=16384,
-        num_heads=8,
-        head_dim=256,
-        depth=18,
-        num_kv_heads=1,
-    ),
-    "gemma_2b_lora": GemmaConfig(
-        width=2048,
-        mlp_dim=16384,
-        num_heads=8,
-        head_dim=256,
-        depth=18,
-        num_kv_heads=1,
-    ),
-    "gemma_300m": GemmaConfig(
-        width=1024,
-        mlp_dim=4096,
-        num_heads=8,
-        head_dim=128,
-        depth=18,
-        num_kv_heads=1,
-    ),
-    "gemma_300m_lora": GemmaConfig(
-        width=1024,
-        mlp_dim=4096,
-        num_heads=8,
-        head_dim=128,
-        depth=18,
-        num_kv_heads=1,
-    ),
-}
-
-
-def get_gemma_config(variant: str) -> GemmaConfig:
-    """Get Gemma configuration by variant name."""
-    if variant not in GEMMA_CONFIGS:
-        raise ValueError(f"Unknown Gemma variant: {variant}. Available: {list(GEMMA_CONFIGS.keys())}")
-    return GEMMA_CONFIGS[variant]
 
 
 # =============================================================================
@@ -168,177 +110,6 @@ def make_att_2d_masks(pad_masks: torch.Tensor, att_masks: torch.Tensor) -> torch
 
 
 # =============================================================================
-# PaliGemma with Expert Model
-# =============================================================================
-
-
-class PaliGemmaWithExpertModel(nn.Module):
-    """PaliGemma VLM combined with Action Expert Gemma.
-
-    This model combines:
-    - PaliGemma: Vision-language model for processing images and text
-    - Expert Gemma: Smaller model for action prediction with optional adaRMSNorm
-    """
-
-    def __init__(
-        self,
-        vlm_config: GemmaConfig,
-        action_expert_config: GemmaConfig,
-        use_adarms: list[bool] | None = None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
-    ):
-        super().__init__()
-
-        if use_adarms is None:
-            use_adarms = [False, False]
-
-        from transformers import GemmaForCausalLM, PaliGemmaForConditionalGeneration
-        from transformers.models.auto import CONFIG_MAPPING
-
-        # Create PaliGemma config
-        vlm_config_hf = CONFIG_MAPPING["paligemma"]()
-        vlm_config_hf._vocab_size = 257152
-        vlm_config_hf.image_token_index = 257152
-        vlm_config_hf.text_config.hidden_size = vlm_config.width
-        vlm_config_hf.text_config.intermediate_size = vlm_config.mlp_dim
-        vlm_config_hf.text_config.num_attention_heads = vlm_config.num_heads
-        vlm_config_hf.text_config.head_dim = vlm_config.head_dim
-        vlm_config_hf.text_config.num_hidden_layers = vlm_config.depth
-        vlm_config_hf.text_config.num_key_value_heads = vlm_config.num_kv_heads
-        vlm_config_hf.text_config.hidden_activation = "gelu_pytorch_tanh"
-        vlm_config_hf.text_config.torch_dtype = "float32"
-        vlm_config_hf.text_config.vocab_size = 257152
-        vlm_config_hf.text_config.use_adarms = use_adarms[0]
-        vlm_config_hf.text_config.adarms_cond_dim = vlm_config.width if use_adarms[0] else None
-        vlm_config_hf.vision_config.intermediate_size = 4304
-        vlm_config_hf.vision_config.projection_dim = 2048
-        vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
-        vlm_config_hf.vision_config.torch_dtype = "float32"
-
-        # Create Action Expert config
-        action_expert_config_hf = CONFIG_MAPPING["gemma"](
-            head_dim=action_expert_config.head_dim,
-            hidden_size=action_expert_config.width,
-            intermediate_size=action_expert_config.mlp_dim,
-            num_attention_heads=action_expert_config.num_heads,
-            num_hidden_layers=action_expert_config.depth,
-            num_key_value_heads=action_expert_config.num_kv_heads,
-            vocab_size=257152,
-            hidden_activation="gelu_pytorch_tanh",
-            torch_dtype="float32",
-            use_adarms=use_adarms[1],
-            adarms_cond_dim=action_expert_config.width if use_adarms[1] else None,
-        )
-
-        self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
-        self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
-        self.gemma_expert.model.embed_tokens = None  # Share embeddings with PaliGemma
-
-        self._apply_precision(precision)
-
-    def _apply_precision(self, precision: Literal["bfloat16", "float32"]) -> None:
-        """Apply precision settings to the model."""
-        if precision == "bfloat16":
-            self.to(dtype=torch.bfloat16)
-        elif precision == "float32":
-            self.to(dtype=torch.float32)
-            return
-        else:
-            raise ValueError(f"Invalid precision: {precision}")
-
-        # Keep certain parameters in float32 for stability
-        params_to_keep_float32 = [
-            "vision_tower.vision_model.embeddings.patch_embedding.weight",
-            "vision_tower.vision_model.embeddings.patch_embedding.bias",
-            "vision_tower.vision_model.embeddings.position_embedding.weight",
-            "input_layernorm",
-            "post_attention_layernorm",
-            "model.norm",
-        ]
-
-        for name, param in self.named_parameters():
-            if any(selector in name for selector in params_to_keep_float32):
-                param.data = param.data.to(dtype=torch.float32)
-
-    def embed_image(self, image: torch.Tensor) -> torch.Tensor:
-        """Embed image using SigLIP vision tower."""
-        return self.paligemma.model.get_image_features(image)
-
-    def embed_language_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        """Embed language tokens."""
-        return self.paligemma.language_model.embed_tokens(tokens)
-
-    def forward(
-        self,
-        attention_mask: torch.Tensor | None = None,
-        position_ids: torch.LongTensor | None = None,
-        past_key_values: list[torch.FloatTensor] | None = None,
-        inputs_embeds: list[torch.FloatTensor] | None = None,
-        use_cache: bool | None = None,
-        adarms_cond: list[torch.Tensor] | None = None,
-    ) -> tuple[list[torch.Tensor | None], list[torch.FloatTensor] | None]:
-        """Forward pass through PaliGemma and Expert Gemma.
-
-        Args:
-            attention_mask: 4D attention mask [B, 1, seq_len, seq_len]
-            position_ids: Position IDs [B, seq_len]
-            past_key_values: Cached key/value tensors for fast decoding
-            inputs_embeds: [prefix_embeds, suffix_embeds] - embeddings for prefix and suffix
-            use_cache: Whether to use/return key-value cache
-            adarms_cond: [prefix_cond, suffix_cond] - conditioning for adaRMSNorm
-
-        Returns:
-            Tuple of ([prefix_output, suffix_output], past_key_values)
-        """
-        if adarms_cond is None:
-            adarms_cond = [None, None]
-
-        # Prefix-only forward (for caching)
-        if inputs_embeds[1] is None:
-            prefix_output = self.paligemma.language_model.forward(
-                inputs_embeds=inputs_embeds[0],
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                use_cache=use_cache,
-                adarms_cond=adarms_cond[0],
-            )
-            return [prefix_output.last_hidden_state, None], prefix_output.past_key_values
-
-        # Suffix-only forward (using cached prefix)
-        if inputs_embeds[0] is None:
-            suffix_output = self.gemma_expert.model.forward(
-                inputs_embeds=inputs_embeds[1],
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                use_cache=use_cache,
-                adarms_cond=adarms_cond[1],
-            )
-            return [None, suffix_output.last_hidden_state], None
-
-        # Joint forward (prefix + suffix together) - simplified version
-        # In production, this should use the optimized joint attention from openpi
-        prefix_out = self.paligemma.language_model.forward(
-            inputs_embeds=inputs_embeds[0],
-            attention_mask=attention_mask[:, :, : inputs_embeds[0].shape[1], : inputs_embeds[0].shape[1]],
-            position_ids=position_ids[:, : inputs_embeds[0].shape[1]],
-            use_cache=False,
-            adarms_cond=adarms_cond[0],
-        )
-
-        suffix_out = self.gemma_expert.model.forward(
-            inputs_embeds=inputs_embeds[1],
-            attention_mask=attention_mask[:, :, inputs_embeds[0].shape[1] :, :],
-            position_ids=position_ids[:, inputs_embeds[0].shape[1] :],
-            use_cache=False,
-            adarms_cond=adarms_cond[1],
-        )
-
-        return [prefix_out.last_hidden_state, suffix_out.last_hidden_state], None
-
-
-# =============================================================================
 # Pi0 Model
 # =============================================================================
 
@@ -354,6 +125,9 @@ class Pi0Model(nn.Module):
     Key differences between Pi0 and Pi0.5:
     - Pi0: Continuous state input via projection, timestep mixed via MLP
     - Pi0.5: Discrete state tokens, timestep via adaRMSNorm conditioning
+
+    Uses PaliGemmaWithExpertModel from models_pytorch/gemma_pytorch.py
+    which implements OpenPI's joint layer-by-layer attention.
     """
 
     def __init__(self, config: Pi0ModelConfig):
@@ -363,11 +137,11 @@ class Pi0Model(nn.Module):
         self.action_dim = config.action_dim
         self.action_horizon = config.action_horizon
 
-        # Get Gemma configs
+        # Get Gemma configs from models_pytorch
         paligemma_config = get_gemma_config(config.paligemma_variant)
         action_expert_config = get_gemma_config(config.action_expert_variant)
 
-        # Create PaliGemma with Expert
+        # Create PaliGemma with Expert using models_pytorch implementation
         use_adarms = [False, True] if config.pi05 else [False, False]
         self.paligemma_with_expert = PaliGemmaWithExpertModel(
             paligemma_config,
@@ -470,7 +244,7 @@ class Pi0Model(nn.Module):
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
 
         bsize = pad_masks.shape[0]
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        att_masks = att_masks[None, :].expand(bsize, att_masks.shape[0])
 
         return embs, pad_masks, att_masks
 
@@ -544,8 +318,8 @@ class Pi0Model(nn.Module):
         # Concatenate
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=device)
+        att_masks = att_masks[None, :].expand(bsize, att_masks.shape[0])
 
         return embs, pad_masks, att_masks, adarms_cond
 
@@ -611,9 +385,9 @@ class Pi0Model(nn.Module):
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
-        # Forward through model
+        # Forward through model (joint layer-by-layer via PaliGemmaWithExpertModel)
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
-        (_, suffix_out), _ = self.paligemma_with_expert.forward(
+        outputs, _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks_4d,
             position_ids=position_ids,
             past_key_values=None,
@@ -622,13 +396,79 @@ class Pi0Model(nn.Module):
             adarms_cond=[None, adarms_cond],
         )
 
-        # Extract action predictions
+        # Extract action predictions from suffix output
+        suffix_out = outputs[1]
         suffix_out = suffix_out[:, -self.action_horizon :]
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
 
         # Compute MSE loss
         return F.mse_loss(u_t, v_t, reduction="none")
+
+    def _get_model_dtype(self) -> torch.dtype:
+        """Get model weight dtype (cached)."""
+        if not hasattr(self, "_cached_model_dtype"):
+            self._cached_model_dtype = self.paligemma_with_expert.paligemma.language_model.layers[
+                0
+            ].self_attn.q_proj.weight.dtype
+        return self._cached_model_dtype
+
+    def _denoise_step(
+        self,
+        state: torch.Tensor,
+        x_t: torch.Tensor,
+        timestep: torch.Tensor,
+        prefix_pad_masks: torch.Tensor,
+        past_key_values: list,
+    ) -> torch.Tensor:
+        """Single denoising step using KV cache.
+
+        This matches OpenPI's inference approach using KV caching.
+        """
+        # Embed suffix for current x_t
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, timestep)
+
+        # Match dtype
+        model_dtype = self._get_model_dtype()
+        if model_dtype == torch.bfloat16:
+            suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
+
+        # Create attention masks for suffix attending to prefix + suffix
+        suffix_len = suffix_pad_masks.shape[1]
+        batch_size = prefix_pad_masks.shape[0]
+        prefix_len = prefix_pad_masks.shape[1]
+
+        # Suffix can attend to all prefix tokens
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+
+        # Suffix attention to itself
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+
+        # Full mask: [prefix, suffix]
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+        # Position IDs for suffix
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
+        # Prepare attention masks
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+
+        # Forward through Expert Gemma with KV cache
+        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"
+        outputs, _ = self.paligemma_with_expert.forward(
+            attention_mask=full_att_2d_masks_4d,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=[None, suffix_embs],
+            use_cache=False,
+            adarms_cond=[None, adarms_cond],
+        )
+
+        # Extract velocity prediction
+        suffix_out = outputs[1]
+        suffix_out = suffix_out[:, -self.action_horizon :]
+        return self.action_out_proj(suffix_out.float())
 
     @torch.no_grad()
     def sample_actions(
@@ -643,13 +483,17 @@ class Pi0Model(nn.Module):
     ) -> torch.Tensor:
         """Sample actions using flow matching ODE integration.
 
+        Uses KV caching for efficient inference:
+        - Processes prefix through PaliGemma ONCE, caches KV
+        - Reuses cached KV for each denoising step
+
         Args:
             images: List of image tensors [B, C, H, W]
             img_masks: List of image masks [B]
             lang_tokens: Language token IDs [B, seq_len]
             lang_masks: Language attention masks [B, seq_len]
             state: Robot state [B, state_dim]
-            num_steps: Number of integration steps
+            num_steps: Number of integration steps (default: 10)
             noise: Optional initial noise
 
         Returns:
@@ -664,13 +508,21 @@ class Pi0Model(nn.Module):
             noise = self.sample_noise(actions_shape, device)
         x_t = noise
 
-        # Embed prefix (compute once, cache KV)
+        # Embed prefix (images + language)
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+
+        # Convert prefix to model dtype
+        model_dtype = self._get_model_dtype()
+        if model_dtype == torch.bfloat16:
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+        # Create prefix attention mask
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        # Cache prefix key-values
+        # Process prefix through PaliGemma ONCE and cache KV
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
@@ -680,44 +532,19 @@ class Pi0Model(nn.Module):
         )
 
         # Euler integration
-        dt = torch.tensor(-1.0 / num_steps, dtype=torch.float32, device=device)
+        dt = -1.0 / num_steps
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
 
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
-
-            # Embed suffix for current x_t
-            suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, expanded_time)
-
-            # Create attention masks for suffix
-            suffix_len = suffix_pad_masks.shape[1]
-            prefix_len = prefix_pad_masks.shape[1]
-
-            prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
-            suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-            full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-
-            # Position IDs for suffix
-            prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-            position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
-            # Forward through suffix
-            full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
-            (_, suffix_out), _ = self.paligemma_with_expert.forward(
-                attention_mask=full_att_2d_masks_4d,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=[None, suffix_embs],
-                use_cache=False,
-                adarms_cond=[None, adarms_cond],
+            v_t = self._denoise_step(
+                state,
+                x_t,
+                expanded_time,
+                prefix_pad_masks,
+                past_key_values,
             )
 
-            # Extract velocity prediction
-            suffix_out = suffix_out[:, -self.action_horizon :]
-            suffix_out = suffix_out.to(dtype=torch.float32)
-            v_t = self.action_out_proj(suffix_out)
-
-            # Euler step
             x_t = x_t + dt * v_t
             time = time + dt
 

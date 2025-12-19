@@ -29,67 +29,56 @@ cp .env.template .env
 # .envファイルを編集して設定
 ```
 
-### 2. Dockerイメージのビルド
+### 2. Docker Compose経由で起動
+
+プロジェクトルートのdocker-compose.ymlを使用:
 
 ```bash
-docker compose build
+cd crane_x7_vla  # プロジェクトルート
+
+# LeRobot開発シェル
+docker compose --profile lerobot up
+
+# トレーニング
+docker compose --profile lerobot-train up
 ```
 
-### 3. キャリブレーション
+### 3. コンテナ内での操作
 
 ```bash
-# ロボットのキャリブレーション
-docker compose --profile calibrate up
+# キャリブレーション
+python scripts/calibrate.py
 
-# テレオペレーター（リーダーアーム）のキャリブレーション
-CALIBRATE_TYPE=teleop docker compose --profile calibrate up
-```
+# データ収集
+python -m lerobot.record \
+  --robot.type=crane_x7 \
+  --teleop.type=crane_x7_teleop \
+  --task="pick up the red block" \
+  --num_episodes=50
 
-### 4. テレオペレーション＋データ収集
+# トレーニング
+python -m lerobot.train \
+  --config configs/act_crane_x7.yaml
 
-```bash
-# 環境変数を設定
-export TASK_INSTRUCTION="pick up the red block"
-export NUM_EPISODES=50
-
-# データ収集開始
-docker compose --profile teleop up
-```
-
-### 5. トレーニング
-
-```bash
-# ACTポリシーのトレーニング
-docker compose --profile train up
-
-# Diffusion Policyのトレーニング
-docker compose --profile train-diffusion up
-```
-
-### 6. 推論
-
-```bash
-export POLICY_PATH=/workspace/outputs/act_crane_x7_dataset/checkpoints/last/pretrained_model
-
-docker compose --profile inference up
+# 推論
+python scripts/inference.py \
+  --policy_path outputs/act_crane_x7/checkpoints/last/pretrained_model
 ```
 
 ## ディレクトリ構造
 
 ```
 lerobot/
-├── Dockerfile                      # Docker環境定義
-├── docker-compose.yml              # サービス定義
 ├── .env.template                   # 環境変数テンプレート
 ├── pyproject.toml                  # Pythonパッケージ定義
 ├── requirements.txt                # 依存関係
 │
-├── lerobot_robot_crane_x7/         # Robotパッケージ
+├── lerobot_robot_crane_x7/         # Robotプラグイン
 │   ├── __init__.py
 │   ├── config_crane_x7.py          # 設定クラス
 │   └── crane_x7.py                 # Robot実装
 │
-├── lerobot_teleoperator_crane_x7/  # Teleoperatorパッケージ
+├── lerobot_teleoperator_crane_x7/  # Teleoperatorプラグイン
 │   ├── __init__.py
 │   ├── config_crane_x7_teleop.py   # 設定クラス
 │   └── crane_x7_teleop.py          # Teleoperator実装
@@ -107,6 +96,8 @@ lerobot/
 ├── calibration/                    # キャリブレーションデータ
 └── outputs/                        # トレーニング出力
 ```
+
+**注意**: DockerfileはプロジェクトルートのDockerfileに統合されています（`docker/Dockerfile.lerobot`）。
 
 ## 設定
 

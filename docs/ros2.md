@@ -84,10 +84,10 @@ LIFT_RENDER_MODE=none               # rgb_array / human / none
 | `sim` | Gazeboシミュレーション | `docker compose --profile sim up` |
 | `teleop` | テレオペ（Leader+Follower） | `docker compose --profile teleop up` |
 | `log` | テレオペ + カメラ + データロガー | `docker compose --profile log up` |
-| `gemini` | 実機 + Gemini API | `docker compose --profile gemini up` |
-| `gemini-sim` | シミュレーション + Gemini | `docker compose --profile gemini-sim up` |
 | `vla` | 実機 + VLA推論（GPU） | `docker compose --profile vla up` |
 | `vla-sim` | シミュレーション + VLA推論 | `docker compose --profile vla-sim up` |
+| `vla-rl` | VLA-RLトレーニング（GPU） | `docker compose --profile vla-rl up` |
+| `vla-rl-dev` | VLA-RL開発シェル | `docker compose --profile vla-rl-dev up` |
 | `lift` | Liftシミュレーション | `docker compose --profile lift up` |
 | `lift-vla` | Lift + VLA推論 | `docker compose --profile lift-vla up` |
 | `lift-logger` | Lift + データロギング | `docker compose --profile lift-logger up` |
@@ -156,21 +156,6 @@ docker compose --profile vla up
 
 # シミュレーション + VLA
 docker compose --profile vla-sim up
-```
-
-### Gemini API統合
-
-Google Gemini Robotics-ER APIを使用したタスク実行。
-
-```bash
-# .envでAPIキーを設定
-# GEMINI_API_KEY=your-api-key
-
-# 実機
-docker compose --profile gemini up
-
-# シミュレーション
-docker compose --profile gemini-sim up
 ```
 
 ### Liftシミュレーション
@@ -303,10 +288,12 @@ crane_x7_vla/
 ├── docker/                        # Docker環境
 │   ├── Dockerfile.ros2            # ROS 2統合環境
 │   ├── Dockerfile.remote-inference # リモートGPU推論
+│   ├── Dockerfile.remote-vla-rl   # リモートVLA-RLトレーニング
 │   ├── Dockerfile.vla-rl          # VLA-RL学習
 │   ├── Dockerfile.lerobot         # LeRobot統合
 │   ├── entrypoint-ros2.sh         # ROS 2用エントリーポイント
 │   ├── entrypoint-remote-inference.sh # 推論用エントリーポイント
+│   ├── entrypoint-remote-vla-rl.sh # VLA-RL用エントリーポイント
 │   └── wait-for-peer.sh           # Tailscale待機スクリプト
 │
 ├── ros2/                          # ROS 2ワークスペース
