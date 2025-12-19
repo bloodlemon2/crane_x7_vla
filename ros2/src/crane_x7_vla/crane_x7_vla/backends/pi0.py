@@ -298,7 +298,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
                 lang_tokens=lang_tokens,
                 lang_masks=lang_masks,
                 state=state_tensor,
-                num_steps=self.config.get('num_denoise_steps', 5),
+                num_steps=self.config.get('num_denoise_steps', 10),
             )
 
             # Cache the action chunk for future use
