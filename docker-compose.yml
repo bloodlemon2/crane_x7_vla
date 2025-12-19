@@ -46,6 +46,7 @@ x-x11-volumes: &x11-volumes
 x-vla-volumes: &vla-volumes
   - /tmp/.X11-unix:/tmp/.X11-unix:rw
   - /mnt/wslg:/mnt/wslg:ro
+  - ./vla/src:/workspace/vla/src:ro
   - ./vla/outputs:/workspace/vla/outputs:ro
   - ./data:/workspace/data:ro
   - ./ros2/src:/workspace/ros2/src:ro
@@ -55,6 +56,7 @@ x-lift-volumes: &lift-volumes
   - /tmp/.X11-unix:/tmp/.X11-unix:rw
   - /mnt/wslg:/mnt/wslg:ro
   - ./sim/src:/workspace/sim/src:ro
+  - ./vla/src:/workspace/vla/src:ro
   - ./vla/outputs:/workspace/vla/outputs:ro
   - ./data:/workspace/data:rw
   - ./ros2/src:/workspace/ros2/src:ro
@@ -93,7 +95,7 @@ x-vla-env: &vla-env
   TF_CPP_MIN_LOG_LEVEL: "2"
   HF_TOKEN: ${HF_TOKEN:-}
   HF_HOME: /home/${USERNAME:-ros2}/.cache/huggingface
-  VLA_TASK_INSTRUCTION: ${VLA_TASK_INSTRUCTION:-pick up the object}
+  VLA_TASK_INSTRUCTION: ${VLA_TASK_INSTRUCTION}
   VLA_DEVICE: ${VLA_DEVICE:-cuda}
 
 x-lift-env: &lift-env
@@ -119,7 +121,7 @@ x-inference-env: &inference-env
   ROSBRIDGE_HOST: ${ROSBRIDGE_HOST:-crane-x7-local}
   ROSBRIDGE_PORT: ${ROSBRIDGE_PORT:-9090}
   VLA_MODEL_PATH: ${VLA_MODEL_PATH}
-  VLA_TASK_INSTRUCTION: ${VLA_TASK_INSTRUCTION:-pick up the object}
+  VLA_TASK_INSTRUCTION: ${VLA_TASK_INSTRUCTION}
   VLA_DEVICE: ${VLA_DEVICE:-cuda}
   VLA_INFERENCE_RATE: ${VLA_INFERENCE_RATE:-10.0}
   HF_TOKEN: ${HF_TOKEN:-}

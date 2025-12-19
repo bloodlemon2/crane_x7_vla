@@ -178,6 +178,8 @@ class PaliGemmaWithExpertModel(nn.Module):
     This model combines:
     - PaliGemma: Vision-language model for processing images and text
     - Expert Gemma: Smaller model for action prediction with optional adaRMSNorm
+
+    Uses joint attention mechanism from openpi for efficient inference.
     """
 
     def __init__(
@@ -235,6 +237,7 @@ class PaliGemmaWithExpertModel(nn.Module):
         self.gemma_expert.model.embed_tokens = None  # Share embeddings with PaliGemma
 
         self._apply_precision(precision)
+        self._debug_gc_printed = False
 
     def _apply_precision(self, precision: Literal["bfloat16", "float32"]) -> None:
         """Apply precision settings to the model."""
@@ -268,6 +271,115 @@ class PaliGemmaWithExpertModel(nn.Module):
         """Embed language tokens."""
         return self.paligemma.language_model.embed_tokens(tokens)
 
+    def _compute_joint_layer(
+        self,
+        layer_idx: int,
+        inputs_embeds: list[torch.Tensor],
+        attention_mask: torch.Tensor,
+        position_ids: torch.Tensor,
+        adarms_cond: list[torch.Tensor | None],
+    ) -> list[torch.Tensor]:
+        """Compute joint attention for a single layer (openpi style).
+
+        This processes both PaliGemma and Expert Gemma layers together,
+        allowing cross-attention between prefix and suffix.
+        """
+        from transformers.models.gemma import modeling_gemma
+
+        models = [self.paligemma.language_model, self.gemma_expert.model]
+
+        # Compute Q, K, V for each model
+        query_states = []
+        key_states = []
+        value_states = []
+        gates = []
+
+        for i, hidden_states in enumerate(inputs_embeds):
+            layer = models[i].layers[layer_idx]
+            hidden_states_normed, gate = layer.input_layernorm(hidden_states, cond=adarms_cond[i])
+            gates.append(gate)
+
+            input_shape = hidden_states_normed.shape[:-1]
+            hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
+
+            query_state = layer.self_attn.q_proj(hidden_states_normed).view(hidden_shape).transpose(1, 2)
+            key_state = layer.self_attn.k_proj(hidden_states_normed).view(hidden_shape).transpose(1, 2)
+            value_state = layer.self_attn.v_proj(hidden_states_normed).view(hidden_shape).transpose(1, 2)
+
+            query_states.append(query_state)
+            key_states.append(key_state)
+            value_states.append(value_state)
+
+        # Concatenate Q, K, V along sequence dimension
+        query_states = torch.cat(query_states, dim=2)
+        key_states = torch.cat(key_states, dim=2)
+        value_states = torch.cat(value_states, dim=2)
+
+        # Apply rotary embeddings
+        dummy_tensor = torch.zeros(
+            query_states.shape[0],
+            query_states.shape[2],
+            query_states.shape[-1],
+            device=query_states.device,
+            dtype=query_states.dtype,
+        )
+        cos, sin = self.paligemma.model.language_model.rotary_emb(dummy_tensor, position_ids)
+        query_states, key_states = modeling_gemma.apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, unsqueeze_dim=1
+        )
+
+        # Joint attention computation
+        batch_size = query_states.shape[0]
+        scaling = self.paligemma.language_model.layers[layer_idx].self_attn.scaling
+
+        att_output, _ = modeling_gemma.eager_attention_forward(
+            self.paligemma.language_model.layers[layer_idx].self_attn,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            scaling,
+        )
+
+        # Reshape attention output
+        head_dim = self.paligemma.language_model.layers[layer_idx].self_attn.head_dim
+        num_heads = self.paligemma.language_model.layers[layer_idx].self_attn.num_heads
+        att_output = att_output.reshape(batch_size, -1, num_heads * head_dim)
+
+        # Process layer outputs for each model
+        outputs_embeds = []
+        start_pos = 0
+
+        for i, hidden_states in enumerate(inputs_embeds):
+            layer = models[i].layers[layer_idx]
+            end_pos = start_pos + hidden_states.shape[1]
+
+            # Project attention output
+            if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
+                att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
+            out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
+
+            # First residual connection
+            out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gates[i])
+            after_first_residual = out_emb.clone()
+
+            # Post-attention layernorm
+            out_emb, gate = layer.post_attention_layernorm(out_emb, cond=adarms_cond[i])
+
+            # Match dtype for MLP
+            if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
+                out_emb = out_emb.to(dtype=torch.bfloat16)
+
+            # MLP
+            out_emb = layer.mlp(out_emb)
+
+            # Second residual connection
+            out_emb = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)
+            outputs_embeds.append(out_emb)
+            start_pos = end_pos
+
+        return outputs_embeds
+
     def forward(
         self,
         attention_mask: torch.Tensor | None = None,
@@ -279,22 +391,17 @@ class PaliGemmaWithExpertModel(nn.Module):
     ) -> tuple[list[torch.Tensor | None], list[torch.FloatTensor] | None]:
         """Forward pass through PaliGemma and Expert Gemma.
 
-        Args:
-            attention_mask: 4D attention mask [B, 1, seq_len, seq_len]
-            position_ids: Position IDs [B, seq_len]
-            past_key_values: Cached key/value tensors for fast decoding
-            inputs_embeds: [prefix_embeds, suffix_embeds] - embeddings for prefix and suffix
-            use_cache: Whether to use/return key-value cache
-            adarms_cond: [prefix_cond, suffix_cond] - conditioning for adaRMSNorm
-
-        Returns:
-            Tuple of ([prefix_output, suffix_output], past_key_values)
+        Supports three modes:
+        1. Prefix-only (inputs_embeds[1] is None): Cache prefix KV
+        2. Suffix-only (inputs_embeds[0] is None): Use cached prefix KV
+        3. Joint (both provided): Layer-by-layer joint attention
         """
         if adarms_cond is None:
             adarms_cond = [None, None]
 
-        # Prefix-only forward (for caching)
+        # Prefix-only forward (for KV caching)
         if inputs_embeds[1] is None:
+            self.paligemma.language_model.config._attn_implementation = "eager"
             prefix_output = self.paligemma.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
                 attention_mask=attention_mask,
@@ -305,8 +412,9 @@ class PaliGemmaWithExpertModel(nn.Module):
             )
             return [prefix_output.last_hidden_state, None], prefix_output.past_key_values
 
-        # Suffix-only forward (using cached prefix)
+        # Suffix-only forward (using cached prefix KV)
         if inputs_embeds[0] is None:
+            self.gemma_expert.model.config._attn_implementation = "eager"
             suffix_output = self.gemma_expert.model.forward(
                 inputs_embeds=inputs_embeds[1],
                 attention_mask=attention_mask,
@@ -317,25 +425,24 @@ class PaliGemmaWithExpertModel(nn.Module):
             )
             return [None, suffix_output.last_hidden_state], None
 
-        # Joint forward (prefix + suffix together) - simplified version
-        # In production, this should use the optimized joint attention from openpi
-        prefix_out = self.paligemma.language_model.forward(
-            inputs_embeds=inputs_embeds[0],
-            attention_mask=attention_mask[:, :, : inputs_embeds[0].shape[1], : inputs_embeds[0].shape[1]],
-            position_ids=position_ids[:, : inputs_embeds[0].shape[1]],
-            use_cache=False,
-            adarms_cond=adarms_cond[0],
-        )
+        # Joint forward with layer-by-layer attention (openpi style)
+        models = [self.paligemma.language_model, self.gemma_expert.model]
+        num_layers = self.paligemma.config.text_config.num_hidden_layers
 
-        suffix_out = self.gemma_expert.model.forward(
-            inputs_embeds=inputs_embeds[1],
-            attention_mask=attention_mask[:, :, inputs_embeds[0].shape[1] :, :],
-            position_ids=position_ids[:, inputs_embeds[0].shape[1] :],
-            use_cache=False,
-            adarms_cond=adarms_cond[1],
-        )
+        # Process all layers
+        current_embeds = inputs_embeds
+        for layer_idx in range(num_layers):
+            current_embeds = self._compute_joint_layer(
+                layer_idx, current_embeds, attention_mask, position_ids, adarms_cond
+            )
 
-        return [prefix_out.last_hidden_state, suffix_out.last_hidden_state], None
+        # Final layer norm
+        outputs_embeds = []
+        for i, hidden_states in enumerate(current_embeds):
+            out_emb, _ = models[i].norm(hidden_states, cond=adarms_cond[i])
+            outputs_embeds.append(out_emb)
+
+        return outputs_embeds, None
 
 
 # =============================================================================
@@ -630,6 +737,60 @@ class Pi0Model(nn.Module):
         # Compute MSE loss
         return F.mse_loss(u_t, v_t, reduction="none")
 
+    def _get_model_dtype(self) -> torch.dtype:
+        """Get model weight dtype (cached)."""
+        if not hasattr(self, "_cached_model_dtype"):
+            self._cached_model_dtype = self.paligemma_with_expert.paligemma.language_model.layers[
+                0
+            ].self_attn.q_proj.weight.dtype
+        return self._cached_model_dtype
+
+    def _denoise_step_with_kv_cache(
+        self,
+        state: torch.Tensor,
+        x_t: torch.Tensor,
+        timestep: torch.Tensor,
+        prefix_pad_masks: torch.Tensor,
+        past_key_values: list,
+    ) -> torch.Tensor:
+        """Single denoising step using KV cache (openpi style).
+
+        This reuses the prefix KV cache computed once, only processing
+        the suffix for each denoising step.
+        """
+        # Embed suffix for current x_t
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, timestep)
+
+        batch_size = suffix_pad_masks.shape[0]
+        suffix_len = suffix_pad_masks.shape[1]
+        prefix_len = prefix_pad_masks.shape[1]
+
+        # Create attention mask: suffix attends to prefix (via KV cache) + suffix
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+        # Position IDs continue from prefix
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
+        # 4D attention mask
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+
+        # Forward through Expert Gemma with KV cache
+        (_, suffix_out), _ = self.paligemma_with_expert.forward(
+            attention_mask=full_att_2d_masks_4d,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=[None, suffix_embs],
+            use_cache=False,
+            adarms_cond=[None, adarms_cond],
+        )
+
+        # Extract velocity prediction
+        suffix_out = suffix_out[:, -self.action_horizon :]
+        return self.action_out_proj(suffix_out.float())
+
     @torch.no_grad()
     def sample_actions(
         self,
@@ -638,10 +799,14 @@ class Pi0Model(nn.Module):
         lang_tokens: torch.Tensor,
         lang_masks: torch.Tensor,
         state: torch.Tensor,
-        num_steps: int = 10,
+        num_steps: int = 5,
         noise: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Sample actions using flow matching ODE integration.
+
+        Optimized for inference:
+        - Computes prefix embeddings (image + language) once
+        - Reuses prefix embeddings for each denoising step
 
         Args:
             images: List of image tensors [B, C, H, W]
@@ -649,7 +814,7 @@ class Pi0Model(nn.Module):
             lang_tokens: Language token IDs [B, seq_len]
             lang_masks: Language attention masks [B, seq_len]
             state: Robot state [B, state_dim]
-            num_steps: Number of integration steps
+            num_steps: Number of integration steps (default: 5)
             noise: Optional initial noise
 
         Returns:
@@ -664,61 +829,28 @@ class Pi0Model(nn.Module):
             noise = self.sample_noise(actions_shape, device)
         x_t = noise
 
-        # Embed prefix (compute once, cache KV)
+        # Embed prefix once (images + language) - most expensive part
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        # Cache prefix key-values
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
-        _, past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=True,
-        )
+        # Convert prefix to model dtype once
+        model_dtype = self._get_model_dtype()
+        if model_dtype == torch.bfloat16:
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+        # Pre-compute timesteps
+        dt = -1.0 / num_steps
+        timesteps = [torch.tensor([1.0 + i * dt] * bsize, dtype=torch.float32, device=device) for i in range(num_steps)]
 
         # Euler integration
-        dt = torch.tensor(-1.0 / num_steps, dtype=torch.float32, device=device)
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
-
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
-
-            # Embed suffix for current x_t
-            suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, expanded_time)
-
-            # Create attention masks for suffix
-            suffix_len = suffix_pad_masks.shape[1]
-            prefix_len = prefix_pad_masks.shape[1]
-
-            prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
-            suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-            full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-
-            # Position IDs for suffix
-            prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-            position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
-            # Forward through suffix
-            full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
-            (_, suffix_out), _ = self.paligemma_with_expert.forward(
-                attention_mask=full_att_2d_masks_4d,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=[None, suffix_embs],
-                use_cache=False,
-                adarms_cond=[None, adarms_cond],
+        for timestep in timesteps:
+            v_t = self._denoise_step_impl(
+                state,
+                x_t,
+                timestep,
+                prefix_embs,
+                prefix_pad_masks,
+                prefix_att_masks,
             )
-
-            # Extract velocity prediction
-            suffix_out = suffix_out[:, -self.action_horizon :]
-            suffix_out = suffix_out.to(dtype=torch.float32)
-            v_t = self.action_out_proj(suffix_out)
-
-            # Euler step
             x_t = x_t + dt * v_t
-            time = time + dt
 
         return x_t

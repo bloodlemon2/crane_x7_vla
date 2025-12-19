@@ -35,6 +35,7 @@ setup(
         'console_scripts': [
             'vla_inference_node = crane_x7_vla.vla_inference_node:main',
             'robot_controller = crane_x7_vla.robot_controller:main',
+            'initial_position_node = crane_x7_vla.initial_position_node:main',
         ],
     },
 )

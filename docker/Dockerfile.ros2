@@ -82,14 +82,14 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip3 install -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
-# Copy OpenVLA/prismatic source code for model loading
-COPY vla/src/openvla /workspace/vla/src/openvla
+# Copy VLA source code for model loading (OpenVLA, Pi0, etc.)
+COPY vla/src /workspace/vla/src
 
 # Copy ManiSkill CRANE-X7 environment
 COPY sim/src /workspace/sim/src
 
 # Environment variables
-ENV PYTHONPATH="/workspace/vla/src/openvla:/workspace/sim/src:${PYTHONPATH}" \
+ENV PYTHONPATH="/workspace/vla/src:/workspace/vla/src/openvla:/workspace/sim/src:${PYTHONPATH}" \
     NUMBA_CACHE_DIR="/tmp/numba_cache" \
     XDG_CACHE_HOME="/tmp/cache" \
     GS_CACHE_FILE_PATH="/tmp/cache/genesis" \

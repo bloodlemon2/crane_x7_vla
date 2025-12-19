@@ -4,8 +4,9 @@
 
 """ROS 2 node for VLA model inference.
 
-This node wraps VLAInferenceCore to provide ROS 2 topic-based
-communication for VLA inference.
+This node uses create_inference_core factory to automatically select
+the appropriate inference backend (OpenVLA or Pi0/Pi0.5) based on
+the model type detected from the checkpoint.
 """
 
 from typing import Optional
@@ -17,7 +18,7 @@ from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import Float32MultiArray, String
 from cv_bridge import CvBridge
 
-from .vla_inference_core import VLAInferenceCore
+from .vla_inference_core import create_inference_core
 
 
 class ROS2LoggerAdapter:
@@ -40,10 +41,11 @@ class ROS2LoggerAdapter:
 
 
 class VLAInferenceNode(Node):
-    """ROS 2 node for OpenVLA model inference.
+    """ROS 2 node for VLA model inference (supports OpenVLA, Pi0, Pi0.5).
 
     This node subscribes to camera images and joint states,
-    runs VLA inference, and publishes predicted actions.
+    runs VLA inference using the appropriate backend, and publishes predicted actions.
+    The model type is automatically detected from the checkpoint.
 
     Subscriptions:
         - /camera/color/image_raw (sensor_msgs/Image): RGB camera image
@@ -58,7 +60,7 @@ class VLAInferenceNode(Node):
         - task_instruction: Task instruction for the robot
         - device: Inference device ('cuda' or 'cpu')
         - inference_rate: Inference rate in Hz
-        - unnorm_key: Key for action normalization statistics
+        - unnorm_key: Key for action normalization statistics (OpenVLA only)
     """
 
     def __init__(self):
@@ -95,11 +97,12 @@ class VLAInferenceNode(Node):
         self.latest_image: Optional[np.ndarray] = None
         self.latest_joint_state: Optional[JointState] = None
 
-        # Create logger adapter for VLAInferenceCore
+        # Create logger adapter for inference core
         logger_adapter = ROS2LoggerAdapter(self.get_logger())
 
-        # Initialize VLA inference core
-        self.vla_core = VLAInferenceCore(
+        # Initialize VLA inference core using factory function
+        # Automatically detects model type (OpenVLA, Pi0, Pi0.5)
+        self.vla_core = create_inference_core(
             model_path=model_path,
             device=device,
             unnorm_key=unnorm_key,
