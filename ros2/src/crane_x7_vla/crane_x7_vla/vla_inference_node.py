@@ -185,6 +185,9 @@ class VLAInferenceNode(Node):
             self.get_logger().warn('No image received yet', throttle_duration_sec=5.0)
             return
 
+        # Extract robot state from joint states
+        state = self._extract_robot_state()
+
         # Define log callback
         def log_callback(msg: str):
             self.get_logger().info(msg)
@@ -193,6 +196,7 @@ class VLAInferenceNode(Node):
         action = self.vla_core.predict_action(
             image=self.latest_image,
             instruction=self.task_instruction,
+            state=state,
             log_callback=log_callback
         )
 
@@ -202,6 +206,46 @@ class VLAInferenceNode(Node):
             action_msg.data = action.tolist()
             self.action_pub.publish(action_msg)
             self.get_logger().info(f'Published action: {action}')
+
+    def _extract_robot_state(self) -> Optional[np.ndarray]:
+        """Extract robot state from latest joint states.
+
+        Returns:
+            8-dim state array (7 arm joints + 1 gripper) or None if not available
+        """
+        if self.latest_joint_state is None:
+            self.get_logger().warn('No joint state received yet', throttle_duration_sec=5.0)
+            return None
+
+        # CRANE-X7 joint order in JointState message
+        # Expected: crane_x7_joint1 through crane_x7_joint7 + crane_x7_gripper_finger_a_joint
+        expected_joints = [
+            'crane_x7_shoulder_fixed_part_pan_joint',
+            'crane_x7_shoulder_revolute_part_tilt_joint',
+            'crane_x7_upper_arm_revolute_part_twist_joint',
+            'crane_x7_upper_arm_revolute_part_rotate_joint',
+            'crane_x7_lower_arm_fixed_part_joint',
+            'crane_x7_lower_arm_revolute_part_joint',
+            'crane_x7_wrist_joint',
+            'crane_x7_gripper_finger_a_joint',
+        ]
+
+        joint_positions = self.latest_joint_state.position
+        joint_names = self.latest_joint_state.name
+
+        # Build state array in expected order
+        state = np.zeros(8, dtype=np.float32)
+        for i, joint_name in enumerate(expected_joints):
+            if joint_name in joint_names:
+                idx = joint_names.index(joint_name)
+                state[i] = joint_positions[idx]
+            else:
+                self.get_logger().warn(
+                    f'Joint {joint_name} not found in joint states',
+                    throttle_duration_sec=10.0
+                )
+
+        return state
 
 
 def main(args=None):

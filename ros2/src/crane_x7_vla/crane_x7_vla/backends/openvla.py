@@ -323,6 +323,7 @@ class OpenVLAInferenceCore(BaseVLAInferenceCore):
         self,
         image: np.ndarray,
         instruction: str,
+        state: Optional[np.ndarray] = None,
         log_callback: Optional[LogCallback] = None
     ) -> Optional[np.ndarray]:
         """Run VLA inference and return predicted action.
@@ -330,6 +331,7 @@ class OpenVLAInferenceCore(BaseVLAInferenceCore):
         Args:
             image: RGB image as numpy array (H, W, 3)
             instruction: Task instruction string
+            state: Robot state array (not used by OpenVLA, kept for interface compatibility)
             log_callback: Optional callback for logging debug info
 
         Returns:

@@ -231,6 +231,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         self,
         image: np.ndarray,
         instruction: str,
+        state: Optional[np.ndarray] = None,
         log_callback: Optional[LogCallback] = None
     ) -> Optional[np.ndarray]:
         """Run Pi0 inference and return predicted action.
@@ -243,6 +244,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         Args:
             image: RGB image as numpy array (H, W, 3)
             instruction: Task instruction string
+            state: Robot state array (joint positions, 8-dim for CRANE-X7)
             log_callback: Optional callback for logging debug info
 
         Returns:
@@ -286,8 +288,8 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             # Prepare language tokens
             lang_tokens, lang_masks = self._prepare_language(instruction)
 
-            # Prepare state (zero state for inference without prior state)
-            state = self._prepare_state()
+            # Prepare state (normalize and pad to 32-dim)
+            state_tensor = self._prepare_state(state, log_callback)
 
             # Run flow matching inference
             action_chunk = self.model.sample_actions(
@@ -295,7 +297,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
                 img_masks=[torch.tensor([True], device=self.device)],
                 lang_tokens=lang_tokens,
                 lang_masks=lang_masks,
-                state=state,
+                state=state_tensor,
                 num_steps=self.config.get('num_denoise_steps', 5),
             )
 
@@ -419,17 +421,89 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
 
         return lang_tokens, lang_masks
 
-    def _prepare_state(self) -> torch.Tensor:
-        """Prepare robot state tensor.
+    def _prepare_state(
+        self,
+        state: Optional[np.ndarray] = None,
+        log_callback: Optional[LogCallback] = None,
+    ) -> torch.Tensor:
+        """Prepare robot state tensor with normalization and padding.
 
-        For inference without prior state, returns zero state.
+        Matches training-time preprocessing:
+        1. Normalize state using quantile statistics (same as actions)
+        2. Pad from 8-dim to 32-dim
+
+        Args:
+            state: Robot state array (8-dim for CRANE-X7) or None for zero state
+            log_callback: Optional callback for logging
 
         Returns:
-            State tensor [1, action_dim]
+            State tensor [1, action_dim] normalized and padded
         """
         action_dim = self.config.get('action_dim', 32)
-        state = torch.zeros(1, action_dim, device=self.device, dtype=torch.float32)
-        return state
+
+        if state is None:
+            # Fallback to zero state if no state provided
+            if log_callback:
+                log_callback('Warning: No state provided, using zero state')
+            return torch.zeros(1, action_dim, device=self.device, dtype=torch.float32)
+
+        # Normalize state (same normalization as actions during training)
+        normalized_state = self._normalize_state(state)
+
+        if log_callback:
+            log_callback(f'State: raw={state[:4]}..., normalized={normalized_state[:4]}...')
+
+        # Pad from 8-dim to 32-dim
+        padded_state = np.zeros(action_dim, dtype=np.float32)
+        padded_state[:len(normalized_state)] = normalized_state
+
+        # Convert to tensor
+        state_tensor = torch.tensor(padded_state, device=self.device, dtype=torch.float32)
+        state_tensor = state_tensor.unsqueeze(0)  # [1, action_dim]
+
+        return state_tensor
+
+    def _normalize_state(self, state: np.ndarray) -> np.ndarray:
+        """Normalize state using the same statistics as actions.
+
+        Training normalizes state to [-1, 1] using quantile statistics:
+            normalized = 2 * (state - q01) / (q99 - q01) - 1
+
+        Args:
+            state: Raw state array (8-dim)
+
+        Returns:
+            Normalized state array in [-1, 1] range
+        """
+        if not self.norm_stats:
+            return state.astype(np.float32)
+
+        # Get stats - handle nested structure
+        stats = self.norm_stats
+        if 'crane_x7' in stats:
+            stats = stats['crane_x7']
+        if 'action' in stats:
+            stats = stats['action']
+
+        q01 = np.array(stats.get('q01', []))
+        q99 = np.array(stats.get('q99', []))
+
+        if len(q01) < len(state) or len(q99) < len(state):
+            self.logger.warning('Normalization stats dimension mismatch, using raw state')
+            return state.astype(np.float32)
+
+        q01 = q01[:len(state)]
+        q99 = q99[:len(state)]
+
+        # Normalize to [-1, 1]
+        range_val = q99 - q01
+        range_val = np.where(range_val < 1e-6, 1.0, range_val)
+        normalized = 2 * (state - q01) / range_val - 1
+
+        # Clip to [-1, 1]
+        normalized = np.clip(normalized, -1.0, 1.0)
+
+        return normalized.astype(np.float32)
 
     def _denormalize_action(self, action: np.ndarray) -> np.ndarray:
         """Denormalize action using stored statistics.

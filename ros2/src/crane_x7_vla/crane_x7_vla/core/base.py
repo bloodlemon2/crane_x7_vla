@@ -78,6 +78,7 @@ class BaseVLAInferenceCore(ABC):
         self,
         image: np.ndarray,
         instruction: str,
+        state: Optional[np.ndarray] = None,
         log_callback: Optional[LogCallback] = None
     ) -> Optional[np.ndarray]:
         """Run inference and return predicted action.
@@ -85,6 +86,7 @@ class BaseVLAInferenceCore(ABC):
         Args:
             image: RGB image as numpy array (H, W, 3)
             instruction: Task instruction string
+            state: Robot state array (joint positions, 8-dim for CRANE-X7)
             log_callback: Optional callback for logging debug info
 
         Returns:
