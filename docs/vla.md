@@ -118,11 +118,11 @@ python -m crane_x7_vla.training.cli train pi0.5 \
 docker build -t crane_x7_vla .
 
 # 異なるCUDAバージョンでビルド
-docker build --build-arg CUDA_VERSION=12.6.3 --build-arg CUDA_SHORT=cu126 -t crane_x7_vla .
+docker build --build-arg CUDA_VERSION=12.8.0 --build-arg CUDA_SHORT=cu128 -t crane_x7_vla .
 ```
 
 **環境仕様**:
-- CUDA 12.6.3
+- CUDA 12.8.0
 - Python 3.11
 - PyTorch 2.9.1
 - Flash Attention 2.8.3
