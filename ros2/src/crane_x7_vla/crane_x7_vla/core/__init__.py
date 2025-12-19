@@ -6,6 +6,7 @@
 
 from crane_x7_vla.core.base import BaseVLAInferenceCore
 from crane_x7_vla.core.factory import create_inference_core, detect_model_type
+from crane_x7_vla.core.robot_config import RobotConfig
 from crane_x7_vla.core.types import LoggerProtocol, ModelType, NormStats, ActionStats
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     'ModelType',
     'NormStats',
     'ActionStats',
+    'RobotConfig',
 ]

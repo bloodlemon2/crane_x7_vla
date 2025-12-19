@@ -14,6 +14,8 @@ from control_msgs.action import FollowJointTrajectory, GripperCommand
 from trajectory_msgs.msg import JointTrajectoryPoint
 from typing import Optional, List
 
+from crane_x7_vla.utils.config_manager import ConfigManager
+
 
 class RobotController(Node):
     """ROS 2 node for executing VLA-predicted actions on CRANE-X7."""
@@ -21,24 +23,18 @@ class RobotController(Node):
     def __init__(self):
         super().__init__('robot_controller')
 
-        # Declare parameters
+        # Declare and load robot configuration
+        ConfigManager.declare_robot_parameters(self)
+        self.robot_config = ConfigManager.load_robot_config(self)
+
+        # Declare node-specific parameters (use robot config for defaults)
         self.declare_parameter('action_topic', '/vla/predicted_action')
         self.declare_parameter('joint_states_topic', '/joint_states')
-        self.declare_parameter('arm_controller_name', '/crane_x7_arm_controller/follow_joint_trajectory')
-        self.declare_parameter('gripper_controller_name', '/crane_x7_gripper_controller/gripper_cmd')
+        self.declare_parameter('arm_controller_name', self.robot_config.arm_controller_name)
+        self.declare_parameter('gripper_controller_name', self.robot_config.gripper_controller_name)
         self.declare_parameter('execution_time', 1.0)
         self.declare_parameter('position_tolerance', 0.01)
         self.declare_parameter('auto_execute', True)
-        # Arm joints only (7 joints)
-        self.declare_parameter('arm_joint_names', [
-            'crane_x7_shoulder_fixed_part_pan_joint',
-            'crane_x7_shoulder_revolute_part_tilt_joint',
-            'crane_x7_upper_arm_revolute_part_twist_joint',
-            'crane_x7_upper_arm_revolute_part_rotate_joint',
-            'crane_x7_lower_arm_fixed_part_joint',
-            'crane_x7_lower_arm_revolute_part_joint',
-            'crane_x7_wrist_joint',
-        ])
 
         # Get parameters
         self.action_topic = self.get_parameter('action_topic').value
@@ -48,7 +44,9 @@ class RobotController(Node):
         self.execution_time = self.get_parameter('execution_time').value
         self.position_tolerance = self.get_parameter('position_tolerance').value
         self.auto_execute = self.get_parameter('auto_execute').value
-        self.arm_joint_names = self.get_parameter('arm_joint_names').value
+
+        # Use robot config for joint names (centralized definition)
+        self.arm_joint_names = self.robot_config.arm_joint_names
 
         # State
         self.current_joint_state: Optional[JointState] = None

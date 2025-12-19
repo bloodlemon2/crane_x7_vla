@@ -37,11 +37,9 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         config: Model configuration from checkpoint
     """
 
-    # CRANE-X7 specific settings
-    CRANE_X7_ACTION_DIM = 8
-
-    # Action chunk caching settings
-    DEFAULT_CHUNK_USE_COUNT = 10  # Number of actions to use from each predicted chunk
+    # Default settings (can be overridden via constructor)
+    DEFAULT_ACTION_DIM = 8
+    DEFAULT_CHUNK_USE_COUNT = 10
 
     def __init__(
         self,
@@ -49,6 +47,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         device: str = 'cuda',
         logger: Optional[logging.Logger] = None,
         chunk_use_count: int = DEFAULT_CHUNK_USE_COUNT,
+        action_dim: int = DEFAULT_ACTION_DIM,
     ):
         """Initialize Pi0 inference core.
 
@@ -57,11 +56,15 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             device: Device for inference ('cuda' or 'cpu')
             logger: Optional logger instance
             chunk_use_count: Number of actions to use from each predicted chunk
+            action_dim: Robot action dimension (default: 8 for CRANE-X7)
         """
         super().__init__(model_path, device, logger)
         self.config = None
         self.tokenizer = None
         self.norm_stats = None
+
+        # Robot-specific settings
+        self._robot_action_dim = action_dim
 
         # Action chunk caching
         self._action_cache: Optional[np.ndarray] = None  # [horizon, action_dim]
@@ -369,7 +372,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             log_callback: Optional callback for logging
         """
         # Extract and denormalize all actions in chunk
-        raw_chunk = action_chunk[0, :, :self.CRANE_X7_ACTION_DIM].cpu().numpy()
+        raw_chunk = action_chunk[0, :, :self._robot_action_dim].cpu().numpy()
 
         # Denormalize each action
         if self.norm_stats:
