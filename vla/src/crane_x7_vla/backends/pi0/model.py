@@ -111,6 +111,9 @@ class AdaRMSNorm(nn.Module):
     for adaptive normalization. Otherwise, behaves like standard RMSNorm.
 
     This is compatible with OpenPI's adaRMSNorm implementation.
+
+    Note: Always maintains self.weight for standard RMSNorm behavior and to allow
+    copying weights from existing RMSNorm layers during model initialization.
     """
 
     def __init__(self, dim: int, eps: float = 1e-6, cond_dim: int | None = None):
@@ -119,14 +122,15 @@ class AdaRMSNorm(nn.Module):
         self.dim = dim
         self.cond_dim = cond_dim
 
+        # Always have weight for standard RMSNorm (needed for weight copying and fallback)
+        self.weight = nn.Parameter(torch.zeros(dim))
+
         if cond_dim is not None:
             # Dense layer for adaptive normalization: outputs scale, shift, gate
             self.dense = nn.Linear(cond_dim, dim * 3, bias=True)
             nn.init.zeros_(self.dense.weight)
             nn.init.zeros_(self.dense.bias)
         else:
-            # Standard RMSNorm weight
-            self.weight = nn.Parameter(torch.zeros(dim))
             self.dense = None
 
     def _norm(self, x: torch.Tensor) -> torch.Tensor:
@@ -168,9 +172,19 @@ def _replace_layernorms_with_adarms(model: nn.Module, cond_dim: int) -> None:
 
     This function recursively traverses the model and replaces layernorm
     modules with AdaRMSNorm that supports conditioning.
+
+    Note: Skips RMSNorm layers that already have adaptive conditioning
+    (i.e., already have a 'dense' attribute for modulation). This ensures
+    compatibility with transformers_replace which may have already configured
+    adaptive RMSNorm via model config.
     """
     for name, child in model.named_children():
         if "RMSNorm" in child.__class__.__name__:
+            # Skip if already has adaptive conditioning (e.g., from transformers_replace)
+            if hasattr(child, "dense") and child.dense is not None:
+                logger.debug(f"Skipping {name}: already has adaptive conditioning")
+                continue
+
             # Get dimension from existing weight
             dim = child.weight.shape[0]
             eps = getattr(child, "eps", 1e-6)
@@ -178,10 +192,9 @@ def _replace_layernorms_with_adarms(model: nn.Module, cond_dim: int) -> None:
             # Create AdaRMSNorm
             ada_norm = AdaRMSNorm(dim=dim, eps=eps, cond_dim=cond_dim)
 
-            # Copy existing weight
+            # Copy existing weight to new AdaRMSNorm
             with torch.no_grad():
-                if hasattr(ada_norm, "weight"):
-                    ada_norm.weight.copy_(child.weight)
+                ada_norm.weight.copy_(child.weight)
 
             # Replace module
             setattr(model, name, ada_norm)
@@ -193,6 +206,47 @@ def _replace_layernorms_with_adarms(model: nn.Module, cond_dim: int) -> None:
 # =============================================================================
 # Utility Functions
 # =============================================================================
+
+
+def _call_rmsnorm(
+    norm_layer: nn.Module, x: torch.Tensor, cond: torch.Tensor | None = None
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Call RMSNorm layer with compatibility for different implementations.
+
+    Handles three cases:
+    1. Standard transformers GemmaRMSNorm: forward(x) -> output (single tensor)
+    2. transformers_replace GemmaRMSNorm: forward(x, cond=None) -> (output, gate)
+    3. Custom AdaRMSNorm: forward(x, cond=None) -> (output, gate)
+
+    Args:
+        norm_layer: RMSNorm layer (standard, transformers_replace, or custom)
+        x: Input tensor
+        cond: Optional conditioning tensor for adaptive RMSNorm
+
+    Returns:
+        Tuple of (normalized output, gate tensor or None)
+    """
+    # Check if this is an adaptive RMSNorm (has dense layer for modulation)
+    is_adaptive = hasattr(norm_layer, "dense") and norm_layer.dense is not None
+
+    if is_adaptive:
+        # Adaptive RMSNorm (custom AdaRMSNorm or transformers_replace with cond_dim)
+        return norm_layer(x, cond=cond)
+
+    # Check if layer accepts cond argument (transformers_replace without cond_dim)
+    # by checking if forward signature has 'cond' parameter
+    import inspect
+
+    sig = inspect.signature(norm_layer.forward)
+    accepts_cond = "cond" in sig.parameters
+
+    if accepts_cond:
+        # transformers_replace GemmaRMSNorm (returns tuple even with cond=None)
+        return norm_layer(x, cond=None)
+
+    # Standard transformers GemmaRMSNorm (returns single tensor)
+    output = norm_layer(x)
+    return output, None
 
 
 def get_safe_dtype(target_dtype: torch.dtype, device_type: str) -> torch.dtype:
@@ -464,13 +518,8 @@ class PaliGemmaWithExpertModel(nn.Module):
         for i, hidden_states in enumerate(inputs_embeds):
             layer = models[i].layers[layer_idx]
 
-            # Input layernorm with optional adaRMS
-            # Check if this is AdaRMSNorm (has dense attribute) or standard RMSNorm
-            if hasattr(layer.input_layernorm, "dense") and layer.input_layernorm.dense is not None:
-                hidden_states_normed, gate = layer.input_layernorm(hidden_states, cond=adarms_cond[i])
-            else:
-                hidden_states_normed = layer.input_layernorm(hidden_states)
-                gate = None
+            # Input layernorm with optional adaRMS (compatible with all RMSNorm variants)
+            hidden_states_normed, gate = _call_rmsnorm(layer.input_layernorm, hidden_states, adarms_cond[i])
             gates.append(gate)
 
             # QKV projection
@@ -528,12 +577,8 @@ class PaliGemmaWithExpertModel(nn.Module):
             out_emb = _gated_residual(hidden_states, out_emb, gates[i])
             after_first_residual = out_emb.clone()
 
-            # Post-attention layernorm with optional adaRMS
-            if hasattr(layer.post_attention_layernorm, "dense") and layer.post_attention_layernorm.dense is not None:
-                out_emb, gate = layer.post_attention_layernorm(out_emb, cond=adarms_cond[i])
-            else:
-                out_emb = layer.post_attention_layernorm(out_emb)
-                gate = None
+            # Post-attention layernorm with optional adaRMS (compatible with all RMSNorm variants)
+            out_emb, gate = _call_rmsnorm(layer.post_attention_layernorm, out_emb, adarms_cond[i])
 
             # Convert to model dtype if needed
             if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
@@ -621,13 +666,10 @@ class PaliGemmaWithExpertModel(nn.Module):
                     layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond
                 )
 
-        # Final norm for each model
+        # Final norm for each model (compatible with all RMSNorm variants)
         outputs_embeds = []
         for i, hidden_states in enumerate(inputs_embeds):
-            if hasattr(models[i].norm, "dense") and models[i].norm.dense is not None:
-                out_emb, _ = models[i].norm(hidden_states, cond=adarms_cond[i])
-            else:
-                out_emb = models[i].norm(hidden_states)
+            out_emb, _ = _call_rmsnorm(models[i].norm, hidden_states, adarms_cond[i])
             outputs_embeds.append(out_emb)
 
         return outputs_embeds, None
@@ -1043,6 +1085,7 @@ class Pi0Model(nn.Module):
 
         # Process prefix through PaliGemma ONCE and cache KV
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
