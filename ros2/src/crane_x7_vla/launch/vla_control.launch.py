@@ -17,6 +17,7 @@ def launch_setup(context, *args, **kwargs):
     # Get launch arguments
     model_path = LaunchConfiguration('model_path')
     task_instruction = LaunchConfiguration('task_instruction')
+    robot_config_file = LaunchConfiguration('robot_config_file')
     config_file = LaunchConfiguration('config_file')
     use_flash_attention = LaunchConfiguration('use_flash_attention')
     device = LaunchConfiguration('device')
@@ -33,10 +34,8 @@ def launch_setup(context, *args, **kwargs):
         name='initial_position_node',
         output='screen',
         parameters=[
-            {
-                'execution_time': 3.0,
-                'position_tolerance': 0.05,
-            }
+            robot_config_file,
+            config_file,
         ],
         condition=IfCondition(set_initial_position),
     )
@@ -49,6 +48,7 @@ def launch_setup(context, *args, **kwargs):
         name='vla_inference_node',
         output='screen',
         parameters=[
+            robot_config_file,
             config_file,
             {
                 'model_path': model_path,
@@ -68,6 +68,7 @@ def launch_setup(context, *args, **kwargs):
         name='robot_controller',
         output='screen',
         parameters=[
+            robot_config_file,
             config_file,
             {
                 'auto_execute': auto_execute,
@@ -94,6 +95,16 @@ def generate_launch_description():
         description='Task instruction for the robot'
     )
 
+    declare_robot_config_file = DeclareLaunchArgument(
+        'robot_config_file',
+        default_value=PathJoinSubstitution([
+            FindPackageShare('crane_x7_vla'),
+            'config',
+            'crane_x7_robot.yaml'
+        ]),
+        description='Path to robot specification file'
+    )
+
     declare_config_file = DeclareLaunchArgument(
         'config_file',
         default_value=PathJoinSubstitution([
@@ -101,7 +112,7 @@ def generate_launch_description():
             'config',
             'vla_config.yaml'
         ]),
-        description='Path to configuration file'
+        description='Path to VLA configuration file'
     )
 
     declare_use_flash_attention = DeclareLaunchArgument(
@@ -137,6 +148,7 @@ def generate_launch_description():
     return LaunchDescription([
         declare_model_path,
         declare_task_instruction,
+        declare_robot_config_file,
         declare_config_file,
         declare_use_flash_attention,
         declare_device,

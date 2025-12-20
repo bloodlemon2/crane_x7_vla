@@ -85,6 +85,8 @@ def create_inference_core(
     model_base_name: str = 'openvla',
     use_flash_attention: bool = False,
     logger: Optional[logging.Logger] = None,
+    chunk_use_count: int = 10,
+    action_dim: int = 8,
 ) -> BaseVLAInferenceCore:
     """Factory function to create appropriate inference core based on model type.
 
@@ -95,6 +97,8 @@ def create_inference_core(
         model_base_name: Base model name for prompt formatting (OpenVLA only)
         use_flash_attention: Whether to use Flash Attention 2 (OpenVLA only)
         logger: Optional logger instance
+        chunk_use_count: Number of actions to use from each predicted chunk (Pi0 only)
+        action_dim: Robot action dimension (Pi0 only, default: 8 for CRANE-X7)
 
     Returns:
         Appropriate inference core instance (OpenVLAInferenceCore or Pi0InferenceCore)
@@ -110,6 +114,8 @@ def create_inference_core(
             model_path=model_path,
             device=device,
             logger=logger,
+            chunk_use_count=chunk_use_count,
+            action_dim=action_dim,
         )
     else:
         log.info('Creating OpenVLAInferenceCore')

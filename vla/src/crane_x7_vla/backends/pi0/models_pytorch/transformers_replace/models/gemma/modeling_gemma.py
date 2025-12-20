@@ -4,6 +4,10 @@
 #             the file from the modular. If any change should be done, please apply the change to the
 #                          modular_gemma.py file directly. One of our CI enforces this.
 #                🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨
+#
+# Modified for CRANE-X7 VLA: Added adaRMS (Adaptive RMSNorm) support for Pi0.5
+# Based on transformers v4.57.3
+#
 # coding=utf-8
 # Copyright 2024 Google Inc. HuggingFace Inc. team. All rights reserved.
 #
@@ -28,7 +32,6 @@ from ...activations import ACT2FN
 from ...cache_utils import Cache, DynamicCache
 from ...generation import GenerationMixin
 from ...masking_utils import create_causal_mask
-from ...modeling_flash_attention_utils import FlashAttentionKwargs
 from ...modeling_layers import GradientCheckpointingLayer
 from ...modeling_outputs import (
     BaseModelOutputWithPast,
@@ -40,19 +43,19 @@ from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import auto_docstring, can_return_tuple, logging
+from ...utils.deprecation import deprecate_kwarg
+from ...utils.generic import check_model_inputs
 
 
-# LossKwargs is only available in transformers v5.0+
-# Define a placeholder for compatibility with transformers 4.x
+# TransformersKwargs is available in transformers v4.57+
 try:
-    from ...utils import LossKwargs
+    from ...utils import TransformersKwargs
 except ImportError:
+    # Fallback for older versions
     from typing import TypedDict
 
-    class LossKwargs(TypedDict, total=False):
-        """Placeholder for LossKwargs (transformers v5.0+ feature)."""
-
-        labels: "torch.Tensor"
+    class TransformersKwargs(TypedDict, total=False):
+        pass
 
 
 from .configuration_gemma import GemmaConfig
@@ -61,7 +64,14 @@ from .configuration_gemma import GemmaConfig
 logger = logging.get_logger(__name__)
 
 
+# ============================================================================
+# adaRMS (Adaptive RMSNorm) support for Pi0.5
+# ============================================================================
+
+
 class GemmaRMSNorm(nn.Module):
+    """RMSNorm with optional adaptive normalization (adaRMS) for Pi0.5."""
+
     def __init__(self, dim: int, eps: float = 1e-6, cond_dim: int | None = None):
         super().__init__()
         self.eps = eps
@@ -70,12 +80,11 @@ class GemmaRMSNorm(nn.Module):
 
         # Dense layer for adaptive normalization (if cond_dim is provided)
         if cond_dim is not None:
-            # self.dense = nn.Linear(cond_dim, dim * 3, bias=True, dtype=torch.bfloat16)
             self.dense = nn.Linear(cond_dim, dim * 3, bias=True)
             # Initialize with zeros (matches source implementation)
             nn.init.zeros_(self.dense.weight)
         else:
-            self.weight = nn.Parameter(torch.zeros(dim, dtype=torch.bfloat16))
+            self.weight = nn.Parameter(torch.zeros(dim))
             self.dense = None
 
     def _norm(self, x):
@@ -99,7 +108,6 @@ class GemmaRMSNorm(nn.Module):
         if cond.shape[-1] != self.cond_dim:
             raise ValueError(f"Expected cond dimension {self.cond_dim}, got {cond.shape[-1]}")
 
-        # self.dense.to(dtype=torch.bfloat16).to(dtype=torch.float32)
         modulation = self.dense(cond)
         # Reshape modulation to broadcast properly: [batch, 1, features] for [batch, seq, features]
         if len(x.shape) == 3:  # [batch, seq, features]
@@ -107,13 +115,7 @@ class GemmaRMSNorm(nn.Module):
 
         scale, shift, gate = torch.chunk(modulation, 3, dim=-1)
 
-        # Apply adaptive normalization: use model weight dtype to ensure compatibility
-        # model_dtype = self.dense.weight.dtype  # Use the model's dtype (bfloat16)
-        # scale = scale.to(model_dtype)
-        # shift = shift.to(model_dtype)
-        # gate = gate.to(model_dtype)
-        # normed_inputs = normed_inputs.to(model_dtype)  # Convert normed_inputs to model dtype
-
+        # Apply adaptive normalization
         normed_inputs = normed_inputs * (1 + scale.to(torch.float32)) + shift.to(torch.float32)
 
         return normed_inputs.to(dtype), gate.to(dtype)
@@ -122,6 +124,32 @@ class GemmaRMSNorm(nn.Module):
         if self.dense is not None:
             return f"dim={self.dim}, eps={self.eps}, adaptive=True, cond_dim={self.cond_dim}"
         return f"{tuple(self.weight.shape)}, eps={self.eps}"
+
+
+def _gated_residual(x, y, gate):
+    """
+    Applies gated residual connection with optional gate parameter.
+
+    Args:
+        x: Input tensor (residual)
+        y: Output tensor to be added
+        gate: Optional gate tensor to modulate the addition
+
+    Returns:
+        x + y if gate is None, otherwise x + y * gate
+    """
+    if x is None and y is None:
+        return None
+    if x is None or y is None:
+        return x if x is not None else y
+    if gate is None:
+        return x + y
+    return x + y * gate
+
+
+# ============================================================================
+# Standard Gemma components
+# ============================================================================
 
 
 class GemmaMLP(nn.Module):
@@ -141,10 +169,12 @@ class GemmaMLP(nn.Module):
 
 
 class GemmaRotaryEmbedding(nn.Module):
+    inv_freq: torch.Tensor  # fix linting for `register_buffer`
+
     def __init__(self, config: GemmaConfig, device=None):
         super().__init__()
         # BC: "rope_type" was originally "type"
-        if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
+        if hasattr(config, "rope_scaling") and isinstance(config.rope_scaling, dict):
             self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
         else:
             self.rope_type = "default"
@@ -220,27 +250,6 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
-def _gated_residual(x, y, gate):
-    """
-    Applies gated residual connection with optional gate parameter.
-
-    Args:
-        x: Input tensor (residual)
-        y: Output tensor to be added
-        gate: Optional gate tensor to modulate the addition
-
-    Returns:
-        x + y if gate is None, otherwise x + y * gate
-    """
-    if x is None and y is None:
-        return None
-    if x is None or y is None:
-        return x if x is not None else y
-    if gate is None:
-        return x + y
-    return x + y * gate
-
-
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -249,7 +258,7 @@ def eager_attention_forward(
     attention_mask: torch.Tensor | None,
     scaling: float,
     dropout: float = 0.0,
-    **kwargs,
+    **kwargs: Unpack[TransformersKwargs],
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
@@ -293,16 +302,16 @@ class GemmaAttention(nn.Module):
             config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
         )
 
+    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: torch.Tensor | None,
-        past_key_value: Cache | None = None,
+        past_key_values: Cache | None = None,
         cache_position: torch.LongTensor | None = None,
-        use_cache: bool = False,
-        **kwargs: Unpack[FlashAttentionKwargs],
-    ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor] | None]:
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
@@ -313,15 +322,10 @@ class GemmaAttention(nn.Module):
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        # Use cache if provided
-        if past_key_value is not None:
-            if use_cache:
-                # sin and cos are specific to RoPE models; cache_position needed for the static cache
-                cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
-            else:
-                key_states = torch.cat([past_key_value[self.layer_idx][0], key_states], dim=2)
-                value_states = torch.cat([past_key_value[self.layer_idx][1], value_states], dim=2)
+        if past_key_values is not None:
+            # sin and cos are specific to RoPE models; cache_position needed for the static cache
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
         if self.config._attn_implementation != "eager":
@@ -351,33 +355,32 @@ class GemmaDecoderLayer(GradientCheckpointingLayer):
         self.self_attn = GemmaAttention(config=config, layer_idx=layer_idx)
 
         self.mlp = GemmaMLP(config)
+        # adaRMS support: get cond_dim from config if use_adarms is True
         cond_dim = getattr(config, "adarms_cond_dim", None) if getattr(config, "use_adarms", False) else None
         self.input_layernorm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim)
         self.post_attention_layernorm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim)
 
+    @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        past_key_value: Cache | None = None,
-        output_attentions: bool | None = False,
+        past_key_values: Cache | None = None,
         use_cache: bool | None = False,
         cache_position: torch.LongTensor | None = None,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,  # necessary, but kept here for BC
-        adarms_cond: torch.Tensor | None = None,
-        **kwargs: Unpack[FlashAttentionKwargs],
-    ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
+        adarms_cond: torch.Tensor | None = None,  # adaRMS condition
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> torch.Tensor:
         residual = hidden_states
         hidden_states, gate = self.input_layernorm(hidden_states, adarms_cond)
-
         # Self Attention
-        hidden_states, self_attn_weights = self.self_attn(
+        hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=past_key_value,
-            output_attentions=output_attentions,
+            past_key_values=past_key_values,
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
@@ -390,12 +393,7 @@ class GemmaDecoderLayer(GradientCheckpointingLayer):
         hidden_states, gate = self.post_attention_layernorm(hidden_states, adarms_cond)
         hidden_states = self.mlp(hidden_states)
         hidden_states = _gated_residual(residual, hidden_states, gate)
-
-        outputs = (hidden_states,)
-        if output_attentions:
-            outputs += (self_attn_weights,)
-
-        return outputs
+        return hidden_states
 
 
 @auto_docstring
@@ -405,28 +403,23 @@ class GemmaPreTrainedModel(PreTrainedModel):
     supports_gradient_checkpointing = True
     _no_split_modules = ["GemmaDecoderLayer"]
     _skip_keys_device_placement = ["past_key_values"]
-    _supports_flash_attn_3 = True
-    _supports_flash_attn_2 = True
+    _supports_flash_attn = True
     _supports_sdpa = True
     _supports_flex_attn = True
-    _supports_cache_class = True
-    _supports_quantized_cache = True
-    _supports_static_cache = True
+
+    _can_compile_fullgraph = True
     _supports_attention_backend = True
+    _can_record_outputs = {
+        "hidden_states": GemmaDecoderLayer,
+        "attentions": GemmaAttention,
+    }
 
     def _init_weights(self, module):
-        std = self.config.initializer_range
-        if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, GemmaRMSNorm):
-            if hasattr(module, "weight"):
-                module.weight.data.fill_(1.0)
+        super()._init_weights(module)
+
+        # We initialize with 0s to be 1 centered as the RMSNorm here does (1 + weight)
+        if "RMSNorm" in module.__class__.__name__ and hasattr(module, "weight"):
+            module.weight.data.zero_()
 
 
 @auto_docstring
@@ -440,7 +433,7 @@ class GemmaModel(GemmaPreTrainedModel):
         self.layers = nn.ModuleList(
             [GemmaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-
+        # adaRMS support: get cond_dim from config if use_adarms is True
         cond_dim = getattr(config, "adarms_cond_dim", None) if getattr(config, "use_adarms", False) else None
         self.norm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim)
         self.rotary_emb = GemmaRotaryEmbedding(config=config)
@@ -449,13 +442,7 @@ class GemmaModel(GemmaPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    def get_input_embeddings(self):
-        return self.embed_tokens
-
-    def set_input_embeddings(self, value):
-        self.embed_tokens = value
-
-    @can_return_tuple
+    @check_model_inputs()
     @auto_docstring
     def forward(
         self,
@@ -465,36 +452,18 @@ class GemmaModel(GemmaPreTrainedModel):
         past_key_values: Cache | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
-        output_attentions: bool | None = None,
-        output_hidden_states: bool | None = None,
         cache_position: torch.LongTensor | None = None,
-        adarms_cond: torch.Tensor | None = None,
-        **kwargs: Unpack[FlashAttentionKwargs],
+        adarms_cond: torch.Tensor | None = None,  # adaRMS condition
+        **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
-        """
-        adarms_cond (`torch.Tensor` of shape `(batch_size, cond_dim)`, *optional*):
-            Condition for ADARMS.
-        """
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        use_cache = use_cache if use_cache is not None else self.config.use_cache
-
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-
-        if self.gradient_checkpointing and self.training and use_cache:
-            logger.warning_once(
-                "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
-            )
-            use_cache = False
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
         if use_cache and past_key_values is None:
-            past_key_values = DynamicCache()
+            past_key_values = DynamicCache(config=self.config)
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -516,9 +485,6 @@ class GemmaModel(GemmaPreTrainedModel):
 
         # embed positions
         hidden_states = inputs_embeds
-        # Convert to bfloat16 if the first layer uses bfloat16
-        if len(self.layers) > 0 and self.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16:
-            hidden_states = hidden_states.to(torch.bfloat16)
 
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
@@ -526,51 +492,26 @@ class GemmaModel(GemmaPreTrainedModel):
         # normalized
         # Gemma downcasts the below to float16, causing sqrt(3072)=55.4256 to become 55.5
         # See https://github.com/huggingface/transformers/pull/29402
-        # Note: normalizer is commented out but kept for reference
-        # normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
-        # hidden_states = hidden_states * normalizer
-
-        # decoder layers
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
+        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
+        hidden_states = hidden_states * normalizer
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
-            if output_hidden_states:
-                all_hidden_states += (hidden_states,)
-
-            layer_outputs = decoder_layer(
+            hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
-                past_key_value=past_key_values,
-                output_attentions=output_attentions,
+                past_key_values=past_key_values,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
                 adarms_cond=adarms_cond,
                 **kwargs,
             )
-
-            hidden_states = layer_outputs[0]
-
-            if output_attentions:
-                all_self_attns += (layer_outputs[1],)
-
         hidden_states, _ = self.norm(hidden_states, adarms_cond)
-
-        # add hidden states from the last decoder layer
-        if output_hidden_states:
-            all_hidden_states += (hidden_states,)
-
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attns,
         )
-
-
-class KwargsForCausalLM(FlashAttentionKwargs, LossKwargs): ...
 
 
 @auto_docstring
@@ -588,24 +529,6 @@ class GemmaForCausalLM(GemmaPreTrainedModel, GenerationMixin):
         # Initialize weights and apply final processing
         self.post_init()
 
-    def get_input_embeddings(self):
-        return self.model.embed_tokens
-
-    def set_input_embeddings(self, value):
-        self.model.embed_tokens = value
-
-    def get_output_embeddings(self):
-        return self.lm_head
-
-    def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
-
-    def set_decoder(self, decoder):
-        self.model = decoder
-
-    def get_decoder(self):
-        return self.model
-
     @can_return_tuple
     @auto_docstring
     def forward(
@@ -617,22 +540,12 @@ class GemmaForCausalLM(GemmaPreTrainedModel, GenerationMixin):
         inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
-        output_attentions: bool | None = None,
-        output_hidden_states: bool | None = None,
         cache_position: torch.LongTensor | None = None,
         logits_to_keep: int | torch.Tensor = 0,
-        adarms_cond: torch.Tensor | None = None,
-        **kwargs: Unpack[KwargsForCausalLM],
+        adarms_cond: torch.Tensor | None = None,  # adaRMS condition
+        **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
         r"""
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
-            config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
-            (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-
-        adarms_cond (`torch.Tensor` of shape `(batch_size, cond_dim)`, *optional*):
-            Condition for ADARMS.
-
         Example:
 
         ```python
@@ -649,12 +562,6 @@ class GemmaForCausalLM(GemmaPreTrainedModel, GenerationMixin):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "What is your favorite condiment?"
         ```"""
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-
-        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs: BaseModelOutputWithPast = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -662,8 +569,6 @@ class GemmaForCausalLM(GemmaPreTrainedModel, GenerationMixin):
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
             cache_position=cache_position,
             adarms_cond=adarms_cond,
             **kwargs,
@@ -728,20 +633,13 @@ class GemmaForSequenceClassification(GemmaPreTrainedModel):
         inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
-        output_attentions: bool | None = None,
-        output_hidden_states: bool | None = None,
-        adarms_cond: torch.Tensor | None = None,
+        adarms_cond: torch.Tensor | None = None,  # adaRMS condition
+        **kwargs: Unpack[TransformersKwargs],
     ) -> SequenceClassifierOutputWithPast:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-
-        adarms_cond (`torch.Tensor` of shape `(batch_size, cond_dim)`, *optional*):
-            Condition for ADARMS.
+            Labels for computing the sequence classification/regression loss.
         """
-
         transformer_outputs: BaseModelOutputWithPast = self.model(
             input_ids,
             attention_mask=attention_mask,
@@ -749,9 +647,8 @@ class GemmaForSequenceClassification(GemmaPreTrainedModel):
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
             adarms_cond=adarms_cond,
+            **kwargs,
         )
         hidden_states = transformer_outputs.last_hidden_state
         logits = self.score(hidden_states)
@@ -763,7 +660,6 @@ class GemmaForSequenceClassification(GemmaPreTrainedModel):
         if self.config.pad_token_id is None:
             last_non_pad_token = -1
         elif input_ids is not None:
-            # To handle both left- and right- padding, we take the rightmost token that is not equal to pad_token_id
             non_pad_mask = (input_ids != self.config.pad_token_id).to(logits.device, torch.int32)
             token_indices = torch.arange(input_ids.shape[-1], device=logits.device, dtype=torch.int32)
             last_non_pad_token = (token_indices * non_pad_mask).argmax(-1)
@@ -824,20 +720,13 @@ class GemmaForTokenClassification(GemmaPreTrainedModel):
         inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
-        output_attentions: bool | None = None,
-        output_hidden_states: bool | None = None,
-        adarms_cond: torch.Tensor | None = None,
+        adarms_cond: torch.Tensor | None = None,  # adaRMS condition
+        **kwargs: Unpack[TransformersKwargs],
     ) -> TokenClassifierOutput:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-
-        adarms_cond (`torch.Tensor` of shape `(batch_size, cond_dim)`, *optional*):
-            Condition for ADARMS.
+            Labels for computing the sequence classification/regression loss.
         """
-
         outputs: BaseModelOutputWithPast = self.model(
             input_ids,
             attention_mask=attention_mask,
@@ -845,9 +734,8 @@ class GemmaForTokenClassification(GemmaPreTrainedModel):
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
             adarms_cond=adarms_cond,
+            **kwargs,
         )
         sequence_output = outputs.last_hidden_state
         sequence_output = self.dropout(sequence_output)

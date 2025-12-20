@@ -19,6 +19,7 @@ from std_msgs.msg import Float32MultiArray, String
 from cv_bridge import CvBridge
 
 from .vla_inference_core import create_inference_core
+from .utils.config_manager import ConfigManager
 
 
 class ROS2LoggerAdapter:
@@ -66,6 +67,10 @@ class VLAInferenceNode(Node):
     def __init__(self):
         super().__init__('vla_inference_node')
 
+        # Declare and load robot configuration
+        ConfigManager.declare_robot_parameters(self)
+        self.robot_config = ConfigManager.load_robot_config(self)
+
         # Declare parameters
         self.declare_parameter('model_path', '')
         self.declare_parameter('model_base_name', 'openvla')
@@ -75,9 +80,11 @@ class VLAInferenceNode(Node):
         self.declare_parameter('image_topic', '/camera/color/image_raw')
         self.declare_parameter('joint_states_topic', '/joint_states')
         self.declare_parameter('action_topic', '/vla/predicted_action')
+        self.declare_parameter('update_instruction_topic', '/vla/update_instruction')
         self.declare_parameter('inference_rate', 10.0)
         self.declare_parameter('center_crop', False)
         self.declare_parameter('unnorm_key', 'crane_x7')
+        self.declare_parameter('chunk_use_count', 10)  # Pi0-specific
 
         # Get parameters
         model_path = self.get_parameter('model_path').value
@@ -88,9 +95,11 @@ class VLAInferenceNode(Node):
         self.image_topic = self.get_parameter('image_topic').value
         self.joint_states_topic = self.get_parameter('joint_states_topic').value
         self.action_topic = self.get_parameter('action_topic').value
+        self.update_instruction_topic = self.get_parameter('update_instruction_topic').value
         self.inference_rate = self.get_parameter('inference_rate').value
         self.center_crop = self.get_parameter('center_crop').value
         unnorm_key = self.get_parameter('unnorm_key').value
+        chunk_use_count = self.get_parameter('chunk_use_count').value
 
         # Initialize
         self.bridge = CvBridge()
@@ -109,6 +118,8 @@ class VLAInferenceNode(Node):
             model_base_name=model_base_name,
             use_flash_attention=use_flash_attention,
             logger=logger_adapter,
+            chunk_use_count=chunk_use_count,
+            action_dim=self.robot_config.action_dim,
         )
 
         # Load model
@@ -139,7 +150,7 @@ class VLAInferenceNode(Node):
         # Subscribe to instruction updates
         self.update_instruction_sub = self.create_subscription(
             String,
-            '/vla/update_instruction',
+            self.update_instruction_topic,
             self._update_instruction_callback,
             10
         )
@@ -217,24 +228,14 @@ class VLAInferenceNode(Node):
             self.get_logger().warn('No joint state received yet', throttle_duration_sec=5.0)
             return None
 
-        # CRANE-X7 joint order in JointState message
-        # Expected: crane_x7_joint1 through crane_x7_joint7 + crane_x7_gripper_finger_a_joint
-        expected_joints = [
-            'crane_x7_shoulder_fixed_part_pan_joint',
-            'crane_x7_shoulder_revolute_part_tilt_joint',
-            'crane_x7_upper_arm_revolute_part_twist_joint',
-            'crane_x7_upper_arm_revolute_part_rotate_joint',
-            'crane_x7_lower_arm_fixed_part_joint',
-            'crane_x7_lower_arm_revolute_part_joint',
-            'crane_x7_wrist_joint',
-            'crane_x7_gripper_finger_a_joint',
-        ]
+        # Use robot config for joint names (centralized definition)
+        expected_joints = self.robot_config.all_joint_names
 
         joint_positions = self.latest_joint_state.position
         joint_names = self.latest_joint_state.name
 
         # Build state array in expected order
-        state = np.zeros(8, dtype=np.float32)
+        state = np.zeros(self.robot_config.action_dim, dtype=np.float32)
         for i, joint_name in enumerate(expected_joints):
             if joint_name in joint_names:
                 idx = joint_names.index(joint_name)

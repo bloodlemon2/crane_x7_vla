@@ -12,49 +12,35 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 from control_msgs.msg import JointTolerance
 from sensor_msgs.msg import JointState
 
+from crane_x7_vla.utils.config_manager import ConfigManager
+
 
 class InitialPositionNode(Node):
     """Node to move CRANE-X7 to training data initial position."""
 
-    # Initial position based on training data (data/tfrecord_logs_2_10Hz)
-    # Rounded to clean values for reproducibility
-    INITIAL_ARM_POSITION = [
-        0.0,    # joint1: crane_x7_shoulder_fixed_part_pan_joint (was 0.043)
-        1.57,   # joint2: crane_x7_shoulder_revolute_part_tilt_joint (~π/2, was 1.611)
-        0.0,    # joint3: crane_x7_upper_arm_revolute_part_twist_joint (was 0.063)
-        -2.8,   # joint4: crane_x7_upper_arm_revolute_part_rotate_joint (was -2.812)
-        0.0,    # joint5: crane_x7_lower_arm_fixed_part_joint (was -0.061)
-        -1.05,  # joint6: crane_x7_lower_arm_revolute_part_joint (~-π/3, was -0.948)
-        1.57,   # joint7: crane_x7_wrist_joint (~π/2, was 1.671)
-    ]
-    INITIAL_GRIPPER_POSITION = 0.0  # Open gripper (was -0.008)
-
-    ARM_JOINT_NAMES = [
-        'crane_x7_shoulder_fixed_part_pan_joint',
-        'crane_x7_shoulder_revolute_part_tilt_joint',
-        'crane_x7_upper_arm_revolute_part_twist_joint',
-        'crane_x7_upper_arm_revolute_part_rotate_joint',
-        'crane_x7_lower_arm_fixed_part_joint',
-        'crane_x7_lower_arm_revolute_part_joint',
-        'crane_x7_wrist_joint',
-    ]
-
     def __init__(self):
         super().__init__('initial_position_node')
 
-        # Declare parameters
-        self.declare_parameter('arm_controller_name', '/crane_x7_arm_controller/follow_joint_trajectory')
-        self.declare_parameter('gripper_controller_name', '/crane_x7_gripper_controller/gripper_cmd')
+        # Declare and load robot configuration
+        ConfigManager.declare_robot_parameters(self)
+        self.robot_config = ConfigManager.load_robot_config(self)
+
+        # Declare node-specific parameters
         self.declare_parameter('execution_time', 3.0)  # Slower for initial movement
         self.declare_parameter('position_tolerance', 0.05)
         self.declare_parameter('wait_for_joint_states', True)
 
-        # Get parameters
-        self.arm_controller_name = self.get_parameter('arm_controller_name').value
-        self.gripper_controller_name = self.get_parameter('gripper_controller_name').value
+        # Get parameters (use robot config for controller names)
+        self.arm_controller_name = self.robot_config.arm_controller_name
+        self.gripper_controller_name = self.robot_config.gripper_controller_name
         self.execution_time = self.get_parameter('execution_time').value
         self.position_tolerance = self.get_parameter('position_tolerance').value
         self.wait_for_joint_states = self.get_parameter('wait_for_joint_states').value
+
+        # Use robot config for positions and joint names
+        self.initial_arm_position = self.robot_config.initial_arm_position
+        self.initial_gripper_position = self.robot_config.initial_gripper_position
+        self.arm_joint_names = self.robot_config.arm_joint_names
 
         # State
         self.joint_state_received = False
@@ -84,8 +70,8 @@ class InitialPositionNode(Node):
             )
 
         self.get_logger().info('Initial Position Node starting...')
-        self.get_logger().info(f'Target arm position: {self.INITIAL_ARM_POSITION}')
-        self.get_logger().info(f'Target gripper position: {self.INITIAL_GRIPPER_POSITION}')
+        self.get_logger().info(f'Target arm position: {self.initial_arm_position}')
+        self.get_logger().info(f'Target gripper position: {self.initial_gripper_position}')
 
         # Start setup process
         self._setup()
@@ -134,11 +120,11 @@ class InitialPositionNode(Node):
     def _execute_arm_action(self) -> None:
         """Execute arm trajectory to initial position."""
         goal_msg = FollowJointTrajectory.Goal()
-        goal_msg.trajectory.joint_names = self.ARM_JOINT_NAMES
+        goal_msg.trajectory.joint_names = self.arm_joint_names
 
         # Create trajectory point
         point = JointTrajectoryPoint()
-        point.positions = self.INITIAL_ARM_POSITION
+        point.positions = self.initial_arm_position
         point.time_from_start.sec = int(self.execution_time)
         point.time_from_start.nanosec = int((self.execution_time % 1) * 1e9)
 
@@ -146,7 +132,7 @@ class InitialPositionNode(Node):
 
         # Set tolerances
         goal_msg.goal_tolerance = []
-        for joint_name in self.ARM_JOINT_NAMES:
+        for joint_name in self.arm_joint_names:
             tolerance = JointTolerance()
             tolerance.name = joint_name
             tolerance.position = self.position_tolerance
@@ -159,7 +145,7 @@ class InitialPositionNode(Node):
     def _execute_gripper_action(self) -> None:
         """Execute gripper action to initial position."""
         goal_msg = GripperCommand.Goal()
-        goal_msg.command.position = float(self.INITIAL_GRIPPER_POSITION)
+        goal_msg.command.position = float(self.initial_gripper_position)
         goal_msg.command.max_effort = 1.0
 
         # Send goal
