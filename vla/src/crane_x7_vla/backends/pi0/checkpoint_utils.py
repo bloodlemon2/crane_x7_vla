@@ -8,6 +8,7 @@ without requiring the full OpenPI model code and its dependencies.
 """
 
 import dataclasses
+import gc
 import json
 import logging
 import os
@@ -20,6 +21,13 @@ import numpy as np
 import torch
 from safetensors.torch import load_file as load_safetensors
 from safetensors.torch import save_file as save_safetensors
+
+
+def _free_memory() -> None:
+    """Force garbage collection and clear CUDA cache if available."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 logger = logging.getLogger(__name__)
@@ -213,7 +221,7 @@ def _load_jax_checkpoint(checkpoint_path: pathlib.Path) -> dict:
         checkpoint_path: Path to the checkpoint directory
 
     Returns:
-        Flattened parameter dictionary
+        Flattened parameter dictionary (as numpy arrays to minimize memory)
     """
     import orbax.checkpoint as ocp
 
@@ -238,17 +246,30 @@ def _load_jax_checkpoint(checkpoint_path: pathlib.Path) -> dict:
     # Handle different checkpoint structures
     params = restored.get("params", restored) if isinstance(restored, dict) else restored
 
+    # Free restored reference early
+    del restored
+    _free_memory()
+
     # Flatten and remove 'value' suffix if present
     flat_params = _flatten_dict(params, sep="/")
 
+    # Free params reference
+    del params
+    _free_memory()
+
     # Check if keys end with 'value' (nnx.State format)
+    # Convert to numpy immediately to free JAX memory
     cleaned_params = {}
     for key, value in flat_params.items():
         new_key = key[: -len("/value")] if key.endswith("/value") else key
-        # Convert to numpy if it's a JAX array
+        # Convert to numpy if it's a JAX array (frees JAX memory)
         if hasattr(value, "numpy") or not isinstance(value, np.ndarray):
             value = np.array(value)
         cleaned_params[new_key] = value
+
+    # Free flat_params reference
+    del flat_params
+    _free_memory()
 
     return cleaned_params
 
@@ -690,7 +711,9 @@ def convert_jax_to_pytorch(
     pi05 = "pi05" in config_name
 
     # Load JAX checkpoint
+    logger.info("Loading JAX checkpoint...")
     raw_params = _load_jax_checkpoint(jax_checkpoint_path)
+    logger.info(f"Loaded {len(raw_params)} parameters from JAX checkpoint")
 
     # Separate PaliGemma params and projection params
     paligemma_params = {}
@@ -723,20 +746,42 @@ def convert_jax_to_pytorch(
                     projection_params_raw[root_key][parts[1]] = {}
                 projection_params_raw[root_key][parts[1]][parts[2]] = value
 
+    # Free raw_params memory (no longer needed after separation)
+    del raw_params
+    _free_memory()
+    logger.info("Freed JAX checkpoint memory")
+
     # Create configs
     paligemma_config = PaliGemmaConfig()
     gemma_expert_config = GemmaExpertConfig()
 
     # Convert PaliGemma weights
+    logger.info("Converting PaliGemma weights...")
     pytorch_params, expert_params = _convert_paligemma_weights(paligemma_params, paligemma_config)
 
+    # Free paligemma_params memory
+    del paligemma_params
+    _free_memory()
+
     # Convert Gemma expert weights
+    logger.info("Converting Gemma expert weights...")
     gemma_params = _convert_gemma_expert_weights(expert_params, gemma_expert_config, pi05=pi05)
     pytorch_params.update(gemma_params)
 
+    # Free expert_params and gemma_params memory
+    del expert_params
+    del gemma_params
+    _free_memory()
+
     # Convert projection params
+    logger.info("Converting projection params...")
     projection_params = _convert_projection_params(projection_params_raw, pi05=pi05)
     pytorch_params.update(projection_params)
+
+    # Free projection_params memory
+    del projection_params_raw
+    del projection_params
+    _free_memory()
 
     # Apply precision and ensure contiguous memory layout
     dtype = torch.float32 if precision == "float32" else torch.bfloat16
