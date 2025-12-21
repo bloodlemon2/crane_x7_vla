@@ -738,10 +738,10 @@ def convert_jax_to_pytorch(
     projection_params = _convert_projection_params(projection_params_raw, pi05=pi05)
     pytorch_params.update(projection_params)
 
-    # Apply precision
+    # Apply precision and ensure contiguous memory layout
     dtype = torch.float32 if precision == "float32" else torch.bfloat16
     for key in pytorch_params:
-        pytorch_params[key] = pytorch_params[key].to(dtype)
+        pytorch_params[key] = pytorch_params[key].to(dtype).contiguous()
 
     # Save
     output_path.mkdir(parents=True, exist_ok=True)
