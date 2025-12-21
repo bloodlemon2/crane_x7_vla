@@ -604,19 +604,23 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         return state_tensor
 
     def _normalize_state(self, state: np.ndarray) -> np.ndarray:
-        """Normalize state using the same statistics as actions.
+        """Normalize state using the same statistics and mode as actions.
 
-        Training normalizes state to [-1, 1] using quantile statistics:
-            normalized = 2 * (state - q01) / (q99 - q01) - 1
+        Supports both quantile and zscore normalization modes:
+        - quantile: normalized = 2 * (state - q01) / (q99 - q01) - 1
+        - zscore: normalized = (state - mean) / std
 
         Args:
             state: Raw state array (8-dim)
 
         Returns:
-            Normalized state array in [-1, 1] range
+            Normalized state array
         """
         if not self.norm_stats:
             return state.astype(np.float32)
+
+        # Get normalization mode from config
+        mode = self.config.get('normalization_mode', 'quantile') if self.config else 'quantile'
 
         # Get stats - handle nested structure
         stats = self.norm_stats
@@ -625,23 +629,43 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         if 'action' in stats:
             stats = stats['action']
 
-        q01 = np.array(stats.get('q01', []))
-        q99 = np.array(stats.get('q99', []))
+        if mode == 'zscore':
+            # Z-score normalization: (state - mean) / std
+            mean = np.array(stats.get('mean', []))
+            std = np.array(stats.get('std', []))
 
-        if len(q01) < len(state) or len(q99) < len(state):
-            self.logger.warning('Normalization stats dimension mismatch, using raw state')
-            return state.astype(np.float32)
+            if len(mean) < len(state) or len(std) < len(state):
+                self.logger.warning('Normalization stats dimension mismatch, using raw state')
+                return state.astype(np.float32)
 
-        q01 = q01[:len(state)]
-        q99 = q99[:len(state)]
+            mean = mean[:len(state)]
+            std = std[:len(state)]
 
-        # Normalize to [-1, 1]
-        range_val = q99 - q01
-        range_val = np.where(range_val < 1e-6, 1.0, range_val)
-        normalized = 2 * (state - q01) / range_val - 1
+            # Avoid division by zero
+            std = np.where(std < 1e-6, 1.0, std)
+            normalized = (state - mean) / std
 
-        # Clip to [-1, 1]
-        normalized = np.clip(normalized, -1.0, 1.0)
+            # Clip to reasonable range (same as training)
+            normalized = np.clip(normalized, -10.0, 10.0)
+        else:
+            # Quantile normalization: 2 * (state - q01) / (q99 - q01) - 1
+            q01 = np.array(stats.get('q01', []))
+            q99 = np.array(stats.get('q99', []))
+
+            if len(q01) < len(state) or len(q99) < len(state):
+                self.logger.warning('Normalization stats dimension mismatch, using raw state')
+                return state.astype(np.float32)
+
+            q01 = q01[:len(state)]
+            q99 = q99[:len(state)]
+
+            # Normalize to [-1, 1]
+            range_val = q99 - q01
+            range_val = np.where(range_val < 1e-6, 1.0, range_val)
+            normalized = 2 * (state - q01) / range_val - 1
+
+            # Clip to [-1, 1]
+            normalized = np.clip(normalized, -1.0, 1.0)
 
         return normalized.astype(np.float32)
 
