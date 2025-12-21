@@ -119,6 +119,84 @@ fi
 echo "Code copied to: ${VLA_WORKSPACE}"
 echo ""
 
+# =============================================================================
+# OpenPI Checkpoint Download/Convert
+# =============================================================================
+# OpenPIの事前学習済みモデル（10k+時間のロボットデータで学習）を使用
+OPENPI_CHECKPOINT=${OPENPI_CHECKPOINT:-"pi05_base"}
+SKIP_OPENPI_DOWNLOAD=${SKIP_OPENPI_DOWNLOAD:-false}
+
+# キャッシュディレクトリを設定
+export CRANE_X7_VLA_CACHE=/root/.cache/crane_x7_vla/openpi
+
+echo "=== OpenPI Checkpoint Setup ==="
+echo "OPENPI_CHECKPOINT: ${OPENPI_CHECKPOINT}"
+echo "SKIP_OPENPI_DOWNLOAD: ${SKIP_OPENPI_DOWNLOAD}"
+echo ""
+
+if [ "${SKIP_OPENPI_DOWNLOAD}" != "true" ]; then
+    # Google Cloud SDKをインストール（gsutilがなければ）
+    if ! command -v gsutil &> /dev/null; then
+        echo "Installing Google Cloud SDK..."
+        if [ -f /etc/debian_version ]; then
+            # Debian/Ubuntu
+            apt-get update && apt-get install -y apt-transport-https ca-certificates gnupg curl
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+            echo "deb https://packages.cloud.google.com/apt cloud-sdk main" | tee /etc/apt/sources.list.d/google-cloud-sdk.list
+            apt-get update && apt-get install -y google-cloud-sdk
+        else
+            # フォールバック: pip経由でgoogle-cloud-storage
+            pip install google-cloud-storage
+        fi
+    fi
+
+    # JAX依存関係をインストール（変換に必要）
+    # Note: 独自の変換コードを使用するため、OpenPIのモデルコード依存は不要
+    echo "Installing dependencies for checkpoint conversion..."
+    pip install orbax-checkpoint || true
+
+    # インストール確認
+    python3 -c "import orbax.checkpoint; import safetensors; print('All dependencies installed')"
+
+    # Pythonでチェックポイントをダウンロード/変換
+    echo "Downloading and converting OpenPI checkpoint: ${OPENPI_CHECKPOINT}..."
+    python3 << EOF
+import sys
+sys.path.insert(0, "${VLA_WORKSPACE}/src")
+
+from crane_x7_vla.backends.pi0.checkpoint_utils import (
+    download_checkpoint,
+    convert_jax_to_pytorch,
+    get_cache_dir,
+)
+import pathlib
+
+checkpoint_name = "${OPENPI_CHECKPOINT}"
+cache_dir = get_cache_dir()
+
+print(f"Cache directory: {cache_dir}")
+
+# JAXチェックポイントをダウンロード
+jax_path = download_checkpoint(checkpoint_name)
+print(f"JAX checkpoint downloaded to: {jax_path}")
+
+# PyTorchに変換
+pytorch_path = cache_dir / "pytorch" / checkpoint_name
+config_name = "pi05_base" if "pi05" in checkpoint_name else "pi0_base"
+pytorch_path = convert_jax_to_pytorch(jax_path, pytorch_path, config_name=config_name)
+print(f"PyTorch checkpoint saved to: {pytorch_path}")
+EOF
+
+    if [ $? -eq 0 ]; then
+        echo "OpenPI checkpoint ready!"
+    else
+        echo "Warning: Failed to download/convert OpenPI checkpoint. Continuing without pretrained weights..."
+    fi
+else
+    echo "Skipping OpenPI checkpoint download (SKIP_OPENPI_DOWNLOAD=true)"
+fi
+echo ""
+
 # 環境変数の設定
 export PYTHONUNBUFFERED=1
 export TF_CPP_MIN_LOG_LEVEL=2
@@ -188,7 +266,8 @@ python -m crane_x7_vla.training.cli train pi0.5 \
     --training-max-steps "${MAX_STEPS}" \
     --training-save-interval "${SAVE_INTERVAL}" \
     --training-eval-interval "${EVAL_INTERVAL}" \
-    --training-gradient-checkpointing
+    --training-gradient-checkpointing \
+    --openpi-checkpoint "${OPENPI_CHECKPOINT}"
 
 TRAIN_EXIT_CODE=$?
 
