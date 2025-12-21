@@ -70,10 +70,12 @@ x-vla-rl-volumes: &vla-rl-volumes
   - ./vla/outputs:/workspace/vla/outputs:ro
   - ./data:/workspace/data:rw
   - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/root/.cache/huggingface:rw
+  - ${HOME}/.cache/crane_x7_vla:/root/.cache/crane_x7_vla:rw
 
 x-inference-volumes: &inference-volumes
   - ./vla/outputs:/workspace/models:ro
   - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/root/.cache/huggingface:rw
+  - ${HOME}/.cache/crane_x7_vla:/root/.cache/crane_x7_vla:rw
   - tailscale-state:/var/lib/tailscale
 
 x-lerobot-volumes: &lerobot-volumes
