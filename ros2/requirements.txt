@@ -36,3 +36,5 @@ gymnasium>=0.26.0
 
 # Genesis simulation
 genesis-world
+
+gsutil
