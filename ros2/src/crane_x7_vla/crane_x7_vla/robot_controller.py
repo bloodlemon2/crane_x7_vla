@@ -55,6 +55,10 @@ class RobotController(Node):
         self.current_arm_goal_handle = None
         self.current_gripper_goal_handle = None
 
+        # Action server connection state
+        self._arm_server_ready = False
+        self._gripper_server_ready = False
+
         # Setup action client for arm trajectory execution
         self.arm_client = ActionClient(
             self,
@@ -83,17 +87,39 @@ class RobotController(Node):
             10
         )
 
-        # Wait for action servers
-        self.get_logger().info(f'Waiting for arm action server: {self.arm_controller_name}')
-        self.arm_client.wait_for_server()
-        self.get_logger().info('Arm action server connected')
-
-        self.get_logger().info(f'Waiting for gripper action server: {self.gripper_controller_name}')
-        self.gripper_client.wait_for_server()
-        self.get_logger().info('Gripper action server connected')
-
-        self.get_logger().info('Robot Controller initialized')
+        # Start checking for action servers (non-blocking)
+        self._server_check_timer = self.create_timer(1.0, self._check_action_servers)
+        self.get_logger().info('Robot Controller initialized (waiting for action servers...)')
         self.get_logger().info(f'Auto execute: {self.auto_execute}')
+
+    def _check_action_servers(self) -> None:
+        """Check if action servers are available (non-blocking)."""
+        # Check arm server
+        if not self._arm_server_ready:
+            if self.arm_client.wait_for_server(timeout_sec=0.1):
+                self._arm_server_ready = True
+                self.get_logger().info(f'Arm action server connected: {self.arm_controller_name}')
+            else:
+                self.get_logger().info(
+                    f'Waiting for arm action server: {self.arm_controller_name}',
+                    throttle_duration_sec=5.0
+                )
+
+        # Check gripper server
+        if not self._gripper_server_ready:
+            if self.gripper_client.wait_for_server(timeout_sec=0.1):
+                self._gripper_server_ready = True
+                self.get_logger().info(f'Gripper action server connected: {self.gripper_controller_name}')
+            else:
+                self.get_logger().info(
+                    f'Waiting for gripper action server: {self.gripper_controller_name}',
+                    throttle_duration_sec=5.0
+                )
+
+        # Stop timer once both are ready
+        if self._arm_server_ready and self._gripper_server_ready:
+            self._server_check_timer.cancel()
+            self.get_logger().info('All action servers connected - ready for execution')
 
     def _joint_state_callback(self, msg: JointState) -> None:
         """Callback for current joint states."""
@@ -106,6 +132,14 @@ class RobotController(Node):
         """
         action = np.array(msg.data)
         self.latest_action = action
+
+        # Check if action servers are ready
+        if not (self._arm_server_ready and self._gripper_server_ready):
+            self.get_logger().warn(
+                'Action servers not ready yet, skipping execution',
+                throttle_duration_sec=2.0
+            )
+            return
 
         if self.auto_execute:
             # Cancel previous goals and execute new action immediately
