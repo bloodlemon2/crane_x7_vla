@@ -141,8 +141,34 @@ docker run --rm \
     bash -c '
 set -euo pipefail
 
+echo "=== Patching transformers ==="
+# transformers_replaceをtransformersにパッチ
+VLA_WORKSPACE="/workspace/vla"
+PYTHON_VERSION=$(python3 -c "import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")")
+TRANSFORMERS_PATH="/usr/local/lib/python${PYTHON_VERSION}/dist-packages/transformers"
+if [ -d "${VLA_WORKSPACE}/src/crane_x7_vla/backends/pi0/models_pytorch/transformers_replace" ]; then
+    echo "Patching transformers with transformers_replace..."
+    cp -r "${VLA_WORKSPACE}/src/crane_x7_vla/backends/pi0/models_pytorch/transformers_replace"/* "${TRANSFORMERS_PATH}/" 2>/dev/null || true
+fi
+echo ""
+
 echo "=== OpenPI Checkpoint Setup ==="
 echo "OPENPI_CHECKPOINT: ${OPENPI_CHECKPOINT}"
+
+# Google Cloud SDKをインストール（gsutilがなければ）
+if ! command -v gsutil &> /dev/null; then
+    echo "Installing Google Cloud SDK..."
+    if [ -f /etc/debian_version ]; then
+        # Debian/Ubuntu
+        apt-get update && apt-get install -y apt-transport-https ca-certificates gnupg curl
+        curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+        echo "deb https://packages.cloud.google.com/apt cloud-sdk main" | tee /etc/apt/sources.list.d/google-cloud-sdk.list
+        apt-get update && apt-get install -y google-cloud-sdk
+    else
+        # フォールバック: pip経由でgoogle-cloud-storage
+        pip install google-cloud-storage
+    fi
+fi
 
 # JAX依存関係をインストール（変換に必要）
 echo "Installing dependencies for checkpoint conversion..."
