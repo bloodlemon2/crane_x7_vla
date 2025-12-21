@@ -25,11 +25,12 @@ vla_inference_node:
     update_instruction_topic: '/vla/update_instruction'  # Instruction update topic
 
     # Inference settings
-    inference_rate: 10.0  # Inference frequency (Hz) - matches training data rate
+    inference_rate: 5.0  # Inference frequency (Hz) - reduced to prevent action cancellation
     center_crop: false  # Apply center crop to images (if trained with augmentation)
 
     # Pi0-specific settings (ignored for OpenVLA)
-    chunk_use_count: 10  # Number of actions to use from each predicted chunk
+    chunk_use_count: 40  # Number of actions to use from each predicted chunk (increased to reduce chunk boundary oscillation)
+    normalization_mode: 'quantile'  # Action normalization mode: 'quantile' or 'zscore' (must match training)
 
 robot_controller:
   ros__parameters:
@@ -38,7 +39,7 @@ robot_controller:
     joint_states_topic: '/joint_states'  # Joint states topic
 
     # Execution settings
-    execution_time: 0.1  # Time to execute each action (seconds) - fast for simulation
+    execution_time: 0.15  # Time to execute each action (seconds) - shorter than inference period (0.2s)
     position_tolerance: 0.01  # Position tolerance for goal (radians)
     auto_execute: true  # Automatically execute received actions
 

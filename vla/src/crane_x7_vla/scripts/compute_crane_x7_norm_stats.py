@@ -197,15 +197,34 @@ def compute_statistics(
     logger.info(f"Processed {step_count} total steps")
 
     # Get final statistics
-    norm_stats = {
-        "state": state_stats.get_statistics(),
-        "actions": action_stats.get_statistics(),
+    # Format compatible with both training (dataset.py) and inference (pi0.py):
+    # {"crane_x7": {"action": {"q01": [...], "q99": [...], "mean": [...], "std": [...]}}}
+    action_stats_dict = action_stats.get_statistics()
+    state_stats_dict = state_stats.get_statistics()
+
+    # Primary format for training/inference (uses "action" key, singular)
+    dataset_statistics = {
+        "crane_x7": {
+            "action": action_stats_dict,
+            "state": state_stats_dict,
+        }
     }
 
     # Save to output directory
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Save as dataset_statistics.json (primary format for training/inference)
+    stats_file = output_dir / "dataset_statistics.json"
+    with stats_file.open("w") as f:
+        json.dump(dataset_statistics, f, indent=2)
+    logger.info(f"Saved dataset statistics to {stats_file}")
+
+    # Also save as norm_stats.json for backward compatibility with OpenPI format
+    norm_stats = {
+        "state": state_stats_dict,
+        "actions": action_stats_dict,
+    }
     output_file = output_dir / "norm_stats.json"
     with output_file.open("w") as f:
         json.dump({"norm_stats": norm_stats}, f, indent=2)
