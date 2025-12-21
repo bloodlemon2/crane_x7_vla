@@ -40,14 +40,83 @@ echo "Hostname: $(hostname)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-N/A}"
 echo "SLURM_JOB_NODELIST: ${SLURM_JOB_NODELIST:-N/A}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-N/A}"
+cat /etc/os-release 2>/dev/null || true
 echo "=========================================="
 
 # 作業ディレクトリに移動
-cd "${SLURM_SUBMIT_DIR:-{{SLURM_REMOTE_WORKDIR}}}"
+WORKDIR="${SLURM_SUBMIT_DIR:-{{SLURM_REMOTE_WORKDIR}}}"
+cd "${WORKDIR}"
 echo "Working directory: $(pwd)"
 
 # ログディレクトリを作成
 mkdir -p logs
+
+# =============================================================================
+# Repository Clone/Update
+# =============================================================================
+REPO_URL="{{GIT_REPO_URL}}"
+REPO_BRANCH="{{GIT_BRANCH}}"
+REPO_REF="${GIT_REF:-}"  # オプション: 特定のコミットハッシュやタグ
+REPO_DIR="crane_x7_vla"
+
+# デフォルト値
+REPO_URL=${REPO_URL:-https://github.com/NOPLAB/crane_x7_vla.git}
+REPO_BRANCH=${REPO_BRANCH:-main}
+
+echo "=== Repository Setup ==="
+echo "REPO_URL: ${REPO_URL}"
+echo "REPO_BRANCH: ${REPO_BRANCH}"
+echo "REPO_REF: ${REPO_REF:-HEAD}"
+echo ""
+
+if [ -d "${REPO_DIR}/.git" ]; then
+    echo "Repository already exists. Updating..."
+    cd "${REPO_DIR}"
+    git fetch origin
+    git checkout "${REPO_BRANCH}"
+    git reset --hard "origin/${REPO_BRANCH}"
+    if [ -n "${REPO_REF}" ]; then
+        echo "Checking out specific ref: ${REPO_REF}"
+        git checkout "${REPO_REF}"
+    fi
+    git submodule update --init --recursive
+    cd ..
+else
+    echo "Cloning repository..."
+    git clone --branch "${REPO_BRANCH}" --recursive "${REPO_URL}" "${REPO_DIR}"
+    if [ -n "${REPO_REF}" ]; then
+        cd "${REPO_DIR}"
+        echo "Checking out specific ref: ${REPO_REF}"
+        git checkout "${REPO_REF}"
+        cd ..
+    fi
+fi
+
+echo "Repository is ready at: $(pwd)/${REPO_DIR}"
+echo "Current commit: $(cd ${REPO_DIR} && git rev-parse HEAD)"
+echo ""
+
+# =============================================================================
+# Copy Code to /workspace/vla
+# =============================================================================
+echo "=== Copying Code to /workspace/vla ==="
+VLA_WORKSPACE="/workspace/vla"
+
+# コードをDockerイメージのパスにコピー
+cp -r "${REPO_DIR}/vla/src/crane_x7_vla" "${VLA_WORKSPACE}/src/"
+cp -r "${REPO_DIR}/vla/configs" "${VLA_WORKSPACE}/"
+
+# transformers_replaceをtransformersにパッチ
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+TRANSFORMERS_PATH="/usr/local/lib/python${PYTHON_VERSION}/dist-packages/transformers"
+if [ -d "${VLA_WORKSPACE}/src/crane_x7_vla/backends/pi0/models_pytorch/transformers_replace" ]; then
+    echo "Patching transformers with transformers_replace..."
+    sudo cp -r "${VLA_WORKSPACE}/src/crane_x7_vla/backends/pi0/models_pytorch/transformers_replace"/* "${TRANSFORMERS_PATH}/" || \
+    cp -r "${VLA_WORKSPACE}/src/crane_x7_vla/backends/pi0/models_pytorch/transformers_replace"/* "${TRANSFORMERS_PATH}/" 2>/dev/null || true
+fi
+
+echo "Code copied to: ${VLA_WORKSPACE}"
+echo ""
 
 # 環境変数の設定
 export PYTHONUNBUFFERED=1

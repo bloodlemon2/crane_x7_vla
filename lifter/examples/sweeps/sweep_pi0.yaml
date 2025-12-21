@@ -37,7 +37,7 @@ parameters:
 
   # バッチサイズ (離散値)
   batch_size:
-    values: [1, 2, 4]
+    values: [1]
 
   # 重み減衰 (対数スケール)
   weight_decay:
@@ -73,6 +73,34 @@ parameters:
 
   # VLMを凍結するか
   freeze_vlm:
+    values: [true, false]
+
+  # === LoRA設定 ===
+
+  # LoRA有効化
+  lora_enabled:
+    values: [true, false]
+
+  # LoRAランク
+  lora_rank:
+    values: [16, 32, 64]
+
+  # LoRA alpha (通常はrankと同じか2倍)
+  lora_alpha:
+    values: [16, 32, 64]
+
+  # LoRAドロップアウト
+  lora_dropout:
+    distribution: uniform
+    min: 0.0
+    max: 0.2
+
+  # Rank-Stabilized LoRA (rsLoRA)
+  lora_use_rslora:
+    values: [true, false]
+
+  # Weight-Decomposed LoRA (DoRA)
+  lora_use_dora:
     values: [true, false]
 
 # 早期終了設定 (性能が悪いrunを早期に終了)
