@@ -601,40 +601,17 @@ class Pi0Model(nn.Module):
         if model_dtype == torch.bfloat16:
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
 
-        # Concatenate padding masks for position_ids
-        full_pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-
-        # Build attention masks
-        prefix_len = prefix_pad_masks.shape[1]
-        suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-
-        # Prefix attention: prefix tokens attend to each other
-        prefix_att_2d = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-
-        # Suffix can attend to all prefix tokens
-        suffix_to_prefix = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
-
-        # Suffix attention: suffix tokens attend to each other (causal)
-        suffix_att_2d = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-
-        # Build full attention mask
-        # Shape: [B, prefix_len + suffix_len, prefix_len + suffix_len]
-        full_att_2d = torch.zeros(
-            batch_size, prefix_len + suffix_len, prefix_len + suffix_len, dtype=torch.bool, device=prefix_embs.device
-        )
-        # Prefix-to-prefix
-        full_att_2d[:, :prefix_len, :prefix_len] = prefix_att_2d
-        # Suffix-to-prefix
-        full_att_2d[:, prefix_len:, :prefix_len] = suffix_to_prefix
-        # Suffix-to-suffix
-        full_att_2d[:, prefix_len:, prefix_len:] = suffix_att_2d
+        # Build attention masks - MUST match training-time forward() method
+        # Concatenate masks and use make_att_2d_masks for consistency
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
 
         # Position IDs
-        position_ids = torch.cumsum(full_pad_masks, dim=1) - 1
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
         # Prepare 4D attention mask
-        full_att_2d_4d = self._prepare_attention_masks_4d(full_att_2d)
+        full_att_2d_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
         # Forward through both models with joint attention
         (prefix_out, suffix_out), _ = self.paligemma_with_expert.forward(
