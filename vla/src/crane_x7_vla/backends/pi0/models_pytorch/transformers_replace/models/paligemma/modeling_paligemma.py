@@ -29,7 +29,6 @@ from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import (
     ModelOutput,
-    auto_docstring,
     can_return_tuple,
     logging,
 )
@@ -54,12 +53,9 @@ logger = logging.get_logger(__name__)
 
 
 @dataclass
-@auto_docstring(
-    custom_intro="""
-    Base class for Paligemma outputs, with hidden states and attentions.
-    """
-)
 class PaligemmaModelOutputWithPast(BaseModelOutputWithPast):
+    """Base class for Paligemma outputs, with hidden states and attentions."""
+
     r"""
     image_hidden_states (`torch.FloatTensor`, *optional*):
         A `torch.FloatTensor` of size `(batch_size, num_images, sequence_length, hidden_size)`.
@@ -70,12 +66,9 @@ class PaligemmaModelOutputWithPast(BaseModelOutputWithPast):
 
 
 @dataclass
-@auto_docstring(
-    custom_intro="""
-    Base class for PaliGemma causal language model (or autoregressive) outputs.
-    """
-)
 class PaliGemmaCausalLMOutputWithPast(ModelOutput):
+    """Base class for PaliGemma causal language model (or autoregressive) outputs."""
+
     r"""
     loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Language modeling loss (for next-token prediction).
@@ -110,7 +103,6 @@ class PaliGemmaMultiModalProjector(nn.Module):
         return hidden_states
 
 
-@auto_docstring
 class PaliGemmaPreTrainedModel(PreTrainedModel):
     config: PaliGemmaConfig
     base_model_prefix = ""
@@ -135,12 +127,9 @@ class PaliGemmaPreTrainedModel(PreTrainedModel):
                 module.bias.data.zero_()
 
 
-@auto_docstring(
-    custom_intro="""
-    The Base Paligemma model which consists of a vision backbone and a language model without language modeling head.,
-    """
-)
 class PaliGemmaModel(PaliGemmaPreTrainedModel):
+    """The Base Paligemma model which consists of a vision backbone and a language model without language modeling head."""
+
     _checkpoint_conversion_mapping = {"language_model.model": "language_model"}
     # we are filtering the logits/labels so we shouldn't divide the loss based on num_items_in_batch
     accepts_loss_kwargs = False
@@ -280,7 +269,6 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         return special_image_mask
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
@@ -391,12 +379,9 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         )
 
 
-@auto_docstring(
-    custom_intro="""
-    The Base Paligemma model which consists of a vision backbone and a language model without language modeling head.,
-    """
-)
 class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixin):
+    """The Base Paligemma model which consists of a vision backbone and a language model without language modeling head."""
+
     _checkpoint_conversion_mapping = {
         "^language_model.model": "model.language_model",
         "^vision_tower": "model.vision_tower",
@@ -440,7 +425,6 @@ class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixi
         return self.model.multi_modal_projector
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,

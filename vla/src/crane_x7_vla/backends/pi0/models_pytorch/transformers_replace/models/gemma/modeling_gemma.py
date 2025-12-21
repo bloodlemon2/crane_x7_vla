@@ -41,7 +41,7 @@ from ...modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
-from ...utils import TransformersKwargs, auto_docstring, can_return_tuple
+from ...utils import TransformersKwargs, can_return_tuple
 from ...utils.deprecation import deprecate_kwarg
 from ...utils.generic import check_model_inputs
 from .configuration_gemma import GemmaConfig
@@ -379,7 +379,6 @@ class GemmaDecoderLayer(GradientCheckpointingLayer):
         return hidden_states
 
 
-@auto_docstring
 class GemmaPreTrainedModel(PreTrainedModel):
     config: GemmaConfig
     base_model_prefix = "model"
@@ -405,7 +404,6 @@ class GemmaPreTrainedModel(PreTrainedModel):
             module.weight.data.zero_()
 
 
-@auto_docstring
 class GemmaModel(GemmaPreTrainedModel):
     def __init__(self, config: GemmaConfig):
         super().__init__(config)
@@ -426,7 +424,6 @@ class GemmaModel(GemmaPreTrainedModel):
         self.post_init()
 
     @check_model_inputs()
-    @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
@@ -497,7 +494,6 @@ class GemmaModel(GemmaPreTrainedModel):
         )
 
 
-@auto_docstring
 class GemmaForCausalLM(GemmaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
@@ -513,7 +509,6 @@ class GemmaForCausalLM(GemmaPreTrainedModel, GenerationMixin):
         self.post_init()
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
