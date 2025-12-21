@@ -169,12 +169,16 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
 
             # Log model configuration details
             discrete_state = self.config.get('discrete_state_input', defaults['discrete_state_input'])
+            image_size = self.config.get('image_size', (224, 224))
+            num_cameras = self.config.get('num_cameras', 1)
             self.logger.info(
                 f'Model loaded: pi05={model_config.pi05}, '
                 f'action_dim={model_config.action_dim}, '
                 f'action_horizon={model_config.action_horizon}, '
                 f'max_token_len={model_config.max_token_len}, '
-                f'discrete_state_input={discrete_state}'
+                f'discrete_state_input={discrete_state}, '
+                f'image_size={image_size}, '
+                f'num_cameras={num_cameras}'
             )
 
             # Load tokenizer for language processing
@@ -407,10 +411,19 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             # Prepare state (normalize and pad to 32-dim)
             state_tensor = self._prepare_state(state, log_callback)
 
+            # Replicate image for all camera views (model trained with multiple cameras)
+            num_cameras = self.config.get('num_cameras', 1)
+            if num_cameras > 1:
+                images = [image_tensor] * num_cameras
+                img_masks = [torch.tensor([True], device=self.device)] * num_cameras
+            else:
+                images = [image_tensor]
+                img_masks = [torch.tensor([True], device=self.device)]
+
             # Run flow matching inference
             action_chunk = self.model.sample_actions(
-                images=[image_tensor],
-                img_masks=[torch.tensor([True], device=self.device)],
+                images=images,
+                img_masks=img_masks,
                 lang_tokens=lang_tokens,
                 lang_masks=lang_masks,
                 state=state_tensor,
