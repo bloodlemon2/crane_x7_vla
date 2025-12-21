@@ -37,4 +37,6 @@ gymnasium>=0.26.0
 # Genesis simulation
 genesis-world
 
+# OpenPI checkpoint loading
 gsutil
+safetensors>=0.4.0
