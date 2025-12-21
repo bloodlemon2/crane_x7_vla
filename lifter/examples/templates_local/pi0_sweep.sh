@@ -23,6 +23,7 @@
 #   - HF_TOKEN: Hugging Face APIトークン（gemmaモデル用）
 #
 # オプション環境変数:
+#   - VLA_DIR: vlaディレクトリのパス（デフォルト: スクリプトから相対的に解決）
 #   - OPENPI_CACHE_DIR: OpenPIチェックポイントキャッシュ（デフォルト: ~/.cache/crane_x7_vla/openpi）
 #   - OPENPI_CHECKPOINT: 使用するOpenPIチェックポイント名（デフォルト: pi0_base）
 #
@@ -57,6 +58,12 @@ OUTPUT_DIR=${OUTPUT_DIR:-{{OUTPUT_DIR}}}
 # コンテナ内パス
 CONTAINER_DATA_ROOT=/workspace/data
 CONTAINER_OUTPUT_DIR=/workspace/outputs
+CONTAINER_VLA_DIR=/workspace/vla
+
+# VLAディレクトリ（ホスト側）
+# スクリプトの場所から相対的に解決（lifter/examples/templates_local/ -> vla/）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VLA_DIR=${VLA_DIR:-"$(cd "${SCRIPT_DIR}/../../../vla" && pwd)"}
 
 # OpenPIキャッシュディレクトリ（ホスト側）
 OPENPI_CACHE_DIR=${OPENPI_CACHE_DIR:-${HOME}/.cache/crane_x7_vla/openpi}
@@ -89,8 +96,10 @@ echo ""
 echo "=== Data Configuration ==="
 echo "DATA_ROOT (host): ${DATA_ROOT}"
 echo "OUTPUT_DIR (host): ${OUTPUT_DIR}"
+echo "VLA_DIR (host): ${VLA_DIR}"
 echo "DATA_ROOT (container): ${CONTAINER_DATA_ROOT}"
 echo "OUTPUT_DIR (container): ${CONTAINER_OUTPUT_DIR}"
+echo "VLA_DIR (container): ${CONTAINER_VLA_DIR}"
 echo ""
 
 # =============================================================================
@@ -125,6 +134,8 @@ docker run --rm \
     -v "${DATA_ROOT}:${CONTAINER_DATA_ROOT}:ro" \
     -v "${OUTPUT_DIR}:${CONTAINER_OUTPUT_DIR}" \
     -v "${OPENPI_CACHE_DIR}:${CONTAINER_CACHE_DIR}" \
+    -v "${VLA_DIR}/src/crane_x7_vla:${CONTAINER_VLA_DIR}/src/crane_x7_vla:ro" \
+    -v "${VLA_DIR}/configs:${CONTAINER_VLA_DIR}/configs:ro" \
     "${CONTAINER_IMAGE}" \
     bash -c '
 set -euo pipefail
