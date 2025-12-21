@@ -2,7 +2,16 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025 nop
 
-"""Pi0/Pi0.5 inference core using flow matching action prediction."""
+"""Pi0/Pi0.5 inference core using flow matching action prediction.
+
+Architecture aligned with vla/src/crane_x7_vla/backends/pi0/model.py.
+
+Key differences between Pi0 and Pi0.5:
+- Pi0: Continuous state input via projection, timestep mixed via MLP
+       max_token_len=48, discrete_state_input=False
+- Pi0.5: Discrete state tokens, timestep via adaRMSNorm conditioning
+         max_token_len=200, discrete_state_input=True
+"""
 
 import json
 import logging
@@ -20,6 +29,17 @@ from crane_x7_vla.utils.image import image_to_tensor, compute_image_hash
 from crane_x7_vla.utils.normalization import denormalize_action, load_norm_stats_from_config
 
 
+# Default settings for Pi0 vs Pi0.5
+PI0_DEFAULTS = {
+    "max_token_len": 48,
+    "discrete_state_input": False,
+}
+PI05_DEFAULTS = {
+    "max_token_len": 200,
+    "discrete_state_input": True,
+}
+
+
 class Pi0InferenceCore(BaseVLAInferenceCore):
     """Pi0/Pi0.5 inference core using flow matching action prediction.
 
@@ -29,6 +49,10 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
     Features:
     - Action chunk caching: Predicts multiple future actions, uses them sequentially
     - Reduces inference frequency by reusing predicted actions
+
+    Architecture:
+    - Pi0: Continuous state input, MLP for timestep processing, max_token_len=48
+    - Pi0.5: Discrete state tokens, adaRMSNorm for timestep injection, max_token_len=200
 
     Attributes:
         model_path: Path to the Pi0 model checkpoint
@@ -107,19 +131,25 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
                 return False
 
             self.config = checkpoint['config']
-            self.logger.info(f'Model type: {self.config.get("model_type", "unknown")}')
+            model_type = self.config.get("model_type", "pi0")
+            is_pi05 = model_type == "pi0.5"
+            self.logger.info(f'Model type: {model_type}')
+
+            # Get defaults based on model type (aligned with vla/config.py)
+            defaults = PI05_DEFAULTS if is_pi05 else PI0_DEFAULTS
 
             # Import Pi0 model classes
             Pi0Model, Pi0ModelConfig = self._import_pi0_classes()
 
             # Create model config - use float32 for inference to avoid dtype mismatches
+            # Settings aligned with vla/src/crane_x7_vla/backends/pi0/config.py
             model_config = Pi0ModelConfig(
-                pi05=self.config.get('model_type') == 'pi0.5',
+                pi05=is_pi05,
                 paligemma_variant=self.config.get('paligemma_variant', 'gemma_2b'),
                 action_expert_variant=self.config.get('action_expert_variant', 'gemma_300m'),
                 action_dim=self.config.get('action_dim', 32),
                 action_horizon=self.config.get('action_horizon', 50),
-                max_token_len=self.config.get('max_token_len', 48),
+                max_token_len=self.config.get('max_token_len', defaults['max_token_len']),
                 dtype='float32',  # Use float32 for inference stability
             )
 
@@ -129,9 +159,15 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             self.model = self.model.to(device=self.device, dtype=torch.float32)
             self.model.eval()
 
-            self.logger.info(f'Model loaded: pi05={model_config.pi05}, '
-                           f'action_dim={model_config.action_dim}, '
-                           f'action_horizon={model_config.action_horizon}')
+            # Log model configuration details
+            discrete_state = self.config.get('discrete_state_input', defaults['discrete_state_input'])
+            self.logger.info(
+                f'Model loaded: pi05={model_config.pi05}, '
+                f'action_dim={model_config.action_dim}, '
+                f'action_horizon={model_config.action_horizon}, '
+                f'max_token_len={model_config.max_token_len}, '
+                f'discrete_state_input={discrete_state}'
+            )
 
             # Load tokenizer for language processing
             self._load_tokenizer()
@@ -192,7 +228,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         Tries multiple paths in order:
         1. checkpoint_dir/dataset_statistics.json
         2. checkpoint_dir/../dataset_statistics.json (parent dir)
-        3. Training data path from config (Docker path mapped)
+        3. data_root_dir from checkpoint config (Pi0TrainerConfig format)
         4. Common Docker data directories
         """
         # List of paths to try
@@ -200,6 +236,17 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             model_path / "dataset_statistics.json",
             model_path.parent / "dataset_statistics.json",
         ]
+
+        # Add data_root_dir from checkpoint config if available
+        # Pi0TrainerConfig stores 'data_root_dir' (aligned with backend.py)
+        if self.config:
+            data_root = self.config.get('data_root_dir')
+            if data_root:
+                data_root_path = Path(data_root)
+                stats_paths.append(data_root_path / "dataset_statistics.json")
+                # Also check parent directory
+                if data_root_path.parent.exists():
+                    stats_paths.append(data_root_path.parent / "dataset_statistics.json")
 
         # Add Docker workspace paths as fallback
         workspace_data_dirs = [
@@ -221,7 +268,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
                 except Exception as e:
                     self.logger.warning(f'Failed to load stats from {stats_path}: {e}')
 
-        # Try to load from training data path in config
+        # Try to load from training data path in config (legacy format)
         if self.config:
             stats = load_norm_stats_from_config(self.config, self.logger)
             if stats:
@@ -409,7 +456,10 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         Returns:
             Tuple of (token_ids, attention_mask) as tensors
         """
-        max_len = self.config.get('max_token_len', 48)
+        # Get max_token_len from config, with model-type-aware defaults
+        model_type = self.config.get('model_type', 'pi0')
+        defaults = PI05_DEFAULTS if model_type == 'pi0.5' else PI0_DEFAULTS
+        max_len = self.config.get('max_token_len', defaults['max_token_len'])
 
         encoding = self.tokenizer(
             instruction,
