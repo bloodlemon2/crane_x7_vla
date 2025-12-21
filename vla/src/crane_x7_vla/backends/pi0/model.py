@@ -39,6 +39,9 @@ class Pi0ModelConfig:
     action_horizon: int = 50
     max_token_len: int = 48
     dtype: str = "bfloat16"
+    use_pretrained: bool = True
+    paligemma_pretrained_id: str | None = None  # None = use default
+    openpi_checkpoint: str | None = None  # OpenPI checkpoint name (e.g., "pi0_base", "pi05_base")
 
 
 # =============================================================================
@@ -141,6 +144,9 @@ class Pi0Model(nn.Module):
         paligemma_config = get_gemma_config(config.paligemma_variant)
         action_expert_config = get_gemma_config(config.action_expert_variant)
 
+        # Determine if we should use OpenPI checkpoint
+        openpi_checkpoint = config.openpi_checkpoint
+
         # Create PaliGemma with Expert using models_pytorch implementation
         use_adarms = [False, True] if config.pi05 else [False, False]
         self.paligemma_with_expert = PaliGemmaWithExpertModel(
@@ -148,6 +154,9 @@ class Pi0Model(nn.Module):
             action_expert_config,
             use_adarms=use_adarms,
             precision=config.dtype,
+            use_pretrained=config.use_pretrained,
+            paligemma_pretrained_id=config.paligemma_pretrained_id,
+            openpi_checkpoint=openpi_checkpoint,
         )
 
         # Action projection layers
@@ -166,6 +175,36 @@ class Pi0Model(nn.Module):
             self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
         self.gradient_checkpointing_enabled = False
+
+        # Load OpenPI checkpoint if specified
+        if openpi_checkpoint is not None:
+            self._load_openpi_checkpoint(openpi_checkpoint)
+
+    def _load_openpi_checkpoint(self, checkpoint_name: str) -> None:
+        """Load weights from an OpenPI checkpoint.
+
+        Args:
+            checkpoint_name: Name of the OpenPI checkpoint (e.g., "pi0_base", "pi05_base")
+        """
+        from .checkpoint_utils import load_openpi_checkpoint, map_openpi_to_crane_x7
+
+        logger.info(f"Loading OpenPI checkpoint: {checkpoint_name}")
+
+        # Load the checkpoint
+        state_dict = load_openpi_checkpoint(checkpoint_name, device="cpu")
+
+        # Map keys if needed
+        mapped_state_dict = map_openpi_to_crane_x7(state_dict, pi05=self.pi05)
+
+        # Load weights with strict=False to allow for missing/extra keys
+        missing_keys, unexpected_keys = self.load_state_dict(mapped_state_dict, strict=False)
+
+        if missing_keys:
+            logger.warning(f"Missing keys when loading OpenPI checkpoint: {missing_keys[:10]}...")
+        if unexpected_keys:
+            logger.warning(f"Unexpected keys when loading OpenPI checkpoint: {unexpected_keys[:10]}...")
+
+        logger.info(f"Successfully loaded OpenPI checkpoint: {checkpoint_name}")
 
     def gradient_checkpointing_enable(self) -> None:
         """Enable gradient checkpointing for memory efficiency."""

@@ -171,6 +171,7 @@ def train_command(args: argparse.Namespace) -> None:
     apply_args_to_config(args, config.training, prefix="training")
     apply_args_to_config(args, config.overfitting, prefix="overfitting")
     _apply_lora_args_to_config(args, config)
+    _apply_pi0_args_to_config(args, config)
 
     # Save configuration
     config_save_path = Path(config.output_dir) / "config.yaml"
@@ -253,6 +254,7 @@ def agent_command(args: argparse.Namespace) -> None:
         apply_args_to_config(args, config.training, prefix="training")
         apply_args_to_config(args, config.overfitting, prefix="overfitting")
         _apply_lora_args_to_config(args, config)
+        _apply_pi0_args_to_config(args, config)
 
         # Save configuration
         config_save_path = Path(config.output_dir) / f"config_{run.id}.yaml"
@@ -319,6 +321,19 @@ def _add_overfitting_arguments(parser: argparse.ArgumentParser) -> None:
         parser,
         OverfittingConfig,
         prefix="overfitting",
+    )
+
+
+def _add_pi0_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add Pi0/Pi0.5 specific configuration arguments."""
+    pi0_group = parser.add_argument_group("Pi0/Pi0.5 Configuration")
+
+    pi0_group.add_argument(
+        "--openpi-checkpoint",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="OpenPI checkpoint name (e.g., 'pi0_base', 'pi05_base', 'pi0_droid', 'pi05_droid')",
     )
 
 
@@ -405,6 +420,16 @@ def _apply_lora_args_to_config(args: argparse.Namespace, config: UnifiedVLAConfi
         config.lora.skip_merge_on_save = args.lora_skip_merge_on_save
 
 
+def _apply_pi0_args_to_config(args: argparse.Namespace, config: UnifiedVLAConfig) -> None:
+    """Apply Pi0/Pi0.5 arguments from CLI to config."""
+    # Only apply if this is a Pi0/Pi0.5 config
+    if not hasattr(config, "pi0"):
+        return
+
+    if hasattr(args, "openpi_checkpoint") and args.openpi_checkpoint is not None:
+        config.pi0.openpi_checkpoint = args.openpi_checkpoint
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -460,6 +485,9 @@ Examples:
         _add_training_arguments(backend_parser)
         _add_overfitting_arguments(backend_parser)
         _add_lora_arguments(backend_parser)
+        # Add Pi0/Pi0.5 specific arguments
+        if backend in ("pi0", "pi0.5"):
+            _add_pi0_arguments(backend_parser)
 
     # =====================
     # Evaluate command
@@ -519,6 +547,9 @@ Examples:
         _add_training_arguments(agent_backend_parser)
         _add_overfitting_arguments(agent_backend_parser)
         _add_lora_arguments(agent_backend_parser)
+        # Add Pi0/Pi0.5 specific arguments
+        if backend in ("pi0", "pi0.5"):
+            _add_pi0_arguments(agent_backend_parser)
 
     args = parser.parse_args()
 

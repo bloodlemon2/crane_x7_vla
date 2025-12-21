@@ -45,6 +45,9 @@ class Pi0TrainerConfig:
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     pretrained_checkpoint: str | None = None
+    use_pretrained: bool = True
+    paligemma_pretrained_id: str = "google/paligemma-3b-pt-224"
+    openpi_checkpoint: str | None = None  # e.g., "pi0_base", "pi05_base"
 
     # Data
     data_root_dir: str = ""
@@ -158,6 +161,9 @@ class Pi0Trainer:
             action_horizon=cfg.action_horizon,
             max_token_len=cfg.max_token_len,
             dtype=cfg.precision,
+            use_pretrained=cfg.use_pretrained,
+            paligemma_pretrained_id=cfg.paligemma_pretrained_id,
+            openpi_checkpoint=cfg.openpi_checkpoint,
         )
         model = Pi0Model(model_config)
         model = model.to(device_id)
@@ -571,6 +577,9 @@ class Pi0Backend(VLABackend):
             paligemma_variant=pi0_cfg.paligemma_variant,
             action_expert_variant=pi0_cfg.action_expert_variant,
             pretrained_checkpoint=pi0_cfg.pretrained_checkpoint,
+            use_pretrained=pi0_cfg.use_pretrained,
+            paligemma_pretrained_id=pi0_cfg.paligemma_pretrained_id,
+            openpi_checkpoint=pi0_cfg.openpi_checkpoint,
             data_root_dir=str(cfg.data.data_root),
             output_dir=str(cfg.output_dir) if cfg.output_dir else "",
             dataset_name=cfg.experiment_name,
@@ -796,7 +805,7 @@ class Pi0Backend(VLABackend):
 
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
-        # Create model
+        # Create model (use_pretrained=False since we're loading from checkpoint)
         model_config = Pi0ModelConfig(
             pi05=self.config.pi0.pi05,
             paligemma_variant=self.config.pi0.paligemma_variant,
@@ -805,6 +814,7 @@ class Pi0Backend(VLABackend):
             action_horizon=self._action_horizon,
             max_token_len=self.config.pi0.max_token_len,
             dtype=self.config.pi0.precision,
+            use_pretrained=False,  # Skip pretrained loading when restoring from checkpoint
         )
         self.model = Pi0Model(model_config)
         self.model.load_state_dict(checkpoint["model_state_dict"])
