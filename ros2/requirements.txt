@@ -40,3 +40,4 @@ genesis-world
 # OpenPI checkpoint loading
 gsutil
 safetensors>=0.4.0
+orbax-checkpoint
