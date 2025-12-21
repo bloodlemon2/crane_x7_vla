@@ -216,10 +216,11 @@ class Pi0Trainer:
                     init_lora_weights="gaussian",
                     bias="none",
                 )
-                model.paligemma_with_expert.paligemma.language_model = get_peft_model(
-                    model.paligemma_with_expert.paligemma.language_model, vlm_lora_config
-                )
-                model.paligemma_with_expert.paligemma.language_model.print_trainable_parameters()
+                vlm_model = model.paligemma_with_expert.paligemma.language_model
+                model.paligemma_with_expert.paligemma.language_model = get_peft_model(vlm_model, vlm_lora_config)
+                # Check if PeftModel was returned (has print_trainable_parameters method)
+                if hasattr(model.paligemma_with_expert.paligemma.language_model, "print_trainable_parameters"):
+                    model.paligemma_with_expert.paligemma.language_model.print_trainable_parameters()
                 logger.info("Applied LoRA to PaliGemma VLM")
         else:
             # Freeze layers if specified (only when not using LoRA)
