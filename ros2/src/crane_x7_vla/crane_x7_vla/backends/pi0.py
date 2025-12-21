@@ -143,6 +143,11 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
 
             # Create model config - use float32 for inference to avoid dtype mismatches
             # Settings aligned with vla/src/crane_x7_vla/backends/pi0/config.py
+            # Include openpi_checkpoint to ensure correct model architecture (vocab_size, etc.)
+            openpi_checkpoint = self.config.get('openpi_checkpoint', None)
+            if openpi_checkpoint:
+                self.logger.info(f'Using OpenPI checkpoint for model architecture: {openpi_checkpoint}')
+
             model_config = Pi0ModelConfig(
                 pi05=is_pi05,
                 paligemma_variant=self.config.get('paligemma_variant', 'gemma_2b'),
@@ -151,10 +156,13 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
                 action_horizon=self.config.get('action_horizon', 50),
                 max_token_len=self.config.get('max_token_len', defaults['max_token_len']),
                 dtype='float32',  # Use float32 for inference stability
+                use_pretrained=False,  # Skip HuggingFace pretrained loading
+                openpi_checkpoint=openpi_checkpoint,  # Use OpenPI checkpoint for correct vocab_size
             )
 
-            # Create and load model
+            # Create model (OpenPI checkpoint will be loaded if specified for correct architecture)
             self.model = Pi0Model(model_config)
+            # Load finetuned weights (overwriting OpenPI base weights)
             self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
             self.model = self.model.to(device=self.device, dtype=torch.float32)
             self.model.eval()
