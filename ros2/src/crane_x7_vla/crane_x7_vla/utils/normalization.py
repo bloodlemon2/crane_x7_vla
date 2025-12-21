@@ -85,8 +85,17 @@ def load_norm_stats_from_config(
     if not data_root:
         return None
 
+    # Translate training paths (/root/vla/) to inference paths (/workspace/)
+    if data_root.startswith('/root/vla/'):
+        data_root = data_root.replace('/root/vla/', '/workspace/')
+
     data_stats_path = Path(data_root) / "dataset_statistics.json"
-    if data_stats_path.exists():
+    try:
+        path_exists = data_stats_path.exists()
+    except PermissionError:
+        return None
+
+    if path_exists:
         try:
             with open(data_stats_path, 'r') as f:
                 stats = json.load(f)
