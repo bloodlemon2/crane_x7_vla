@@ -85,6 +85,35 @@ parameters:
   freeze_vlm:
     values: [false]
 
+  # === LoRA設定 ===
+  # NOTE: Pi0.5はメモリ使用量が高いため、LoRAを使用することでVRAM削減と学習安定化を図る
+
+  # LoRA有効化
+  lora_enabled:
+    values: [true]
+
+  # LoRAランク (Pi0.5はメモリ制約があるため控えめに)
+  lora_rank:
+    values: [16, 32]
+
+  # LoRA alpha
+  lora_alpha:
+    values: [16, 32]
+
+  # LoRAドロップアウト
+  lora_dropout:
+    distribution: uniform
+    min: 0.0
+    max: 0.15
+
+  # Rank-Stabilized LoRA (rsLoRA) - Pi0.5の安定性向上に有効
+  lora_use_rslora:
+    values: [true, false]
+
+  # Weight-Decomposed LoRA (DoRA)
+  lora_use_dora:
+    values: [true, false]
+
 # 早期終了設定 (性能が悪いrunを早期に終了)
 early_terminate:
   type: hyperband

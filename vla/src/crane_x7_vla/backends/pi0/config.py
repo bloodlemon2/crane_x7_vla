@@ -31,6 +31,23 @@ class Pi0SpecificConfig:
     pretrained_checkpoint: str | None = None
     """Path to pretrained checkpoint (if any)"""
 
+    use_pretrained: bool = True
+    """Whether to load pretrained weights for PaliGemma VLM"""
+
+    paligemma_pretrained_id: str = "google/paligemma-3b-pt-224"
+    """HuggingFace model ID for pretrained PaliGemma"""
+
+    openpi_checkpoint: str | None = None
+    """OpenPI checkpoint name (e.g., "pi0_base", "pi05_base", "pi0_droid", "pi05_droid").
+    If specified, loads the full Pi0/Pi0.5 model pretrained on 10k+ hours of robot data.
+    This overrides paligemma_pretrained_id and use_pretrained.
+    Available checkpoints:
+    - pi0_base: Base Pi0 model for fine-tuning
+    - pi05_base: Base Pi0.5 model for fine-tuning
+    - pi0_droid: Pi0 fine-tuned on DROID dataset
+    - pi05_droid: Pi0.5 fine-tuned on DROID dataset
+    """
+
     # Action configuration
     action_dim: int = 32
     """Action dimension (Pi0 uses 32, will pad from CRANE-X7's 8)"""
@@ -157,6 +174,9 @@ class Pi0Config(UnifiedVLAConfig):
             "paligemma_variant": self.pi0.paligemma_variant,
             "action_expert_variant": self.pi0.action_expert_variant,
             "pretrained_checkpoint": self.pi0.pretrained_checkpoint,
+            "use_pretrained": self.pi0.use_pretrained,
+            "paligemma_pretrained_id": self.pi0.paligemma_pretrained_id,
+            "openpi_checkpoint": self.pi0.openpi_checkpoint,
             "action_dim": self.pi0.action_dim,
             "state_dim": self.pi0.state_dim,
             "action_horizon": self.pi0.action_horizon,

@@ -4,6 +4,8 @@
 
 """PaliGemma with Expert Gemma model for Pi0/Pi0.5."""
 
+import logging
+import os
 from typing import Literal
 
 import torch
@@ -15,18 +17,57 @@ from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
 from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
 
 
+logger = logging.getLogger(__name__)
+
+# OpenPI checkpoint names
+OPENPI_CHECKPOINTS = {
+    "pi0_base": "gs://openpi-assets/checkpoints/pi0_base",
+    "pi05_base": "gs://openpi-assets/checkpoints/pi05_base",
+    "pi0_droid": "gs://openpi-assets/checkpoints/pi0_droid",
+    "pi05_droid": "gs://openpi-assets/checkpoints/pi05_droid",
+}
+
+
 class PaliGemmaWithExpertModel(nn.Module):
+    # Default pretrained model IDs
+    DEFAULT_PALIGEMMA_PRETRAINED = "google/paligemma-3b-pt-224"
+    DEFAULT_OPENPI_CHECKPOINT = "pi0_base"
+    DEFAULT_OPENPI_CHECKPOINT_PI05 = "pi05_base"
+
     def __init__(
         self,
         vlm_config,
         action_expert_config,
         use_adarms=None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
+        use_pretrained: bool = True,
+        paligemma_pretrained_id: str | None = None,
+        openpi_checkpoint: str | None = None,
     ):
+        """Initialize PaliGemma with Expert Gemma model.
+
+        Args:
+            vlm_config: Configuration for PaliGemma VLM
+            action_expert_config: Configuration for Action Expert Gemma
+            use_adarms: List of [vlm_use_adarms, expert_use_adarms] for Pi0.5
+            precision: Model precision ("bfloat16" or "float32")
+            use_pretrained: Whether to load pretrained weights
+            paligemma_pretrained_id: HuggingFace model ID for PaliGemma (if not using OpenPI)
+            openpi_checkpoint: OpenPI checkpoint name (e.g., "pi0_base", "pi05_base")
+                             If provided, loads the full Pi0/Pi0.5 pretrained model from OpenPI.
+                             This overrides paligemma_pretrained_id.
+        """
         if use_adarms is None:
             use_adarms = [False, False]
         super().__init__()
 
+        self._use_adarms = use_adarms
+        self._precision = precision
+
+        # Get HuggingFace token from environment
+        hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+
+        # PaliGemma VLM config
         vlm_config_hf = CONFIG_MAPPING["paligemma"]()
         vlm_config_hf._vocab_size = 257152
         vlm_config_hf.image_token_index = 257152
@@ -46,6 +87,7 @@ class PaliGemmaWithExpertModel(nn.Module):
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         vlm_config_hf.vision_config.torch_dtype = "float32"
 
+        # Action Expert config
         action_expert_config_hf = CONFIG_MAPPING["gemma"](
             head_dim=action_expert_config.head_dim,
             hidden_size=action_expert_config.width,
@@ -60,11 +102,55 @@ class PaliGemmaWithExpertModel(nn.Module):
             adarms_cond_dim=action_expert_config.width if use_adarms[1] else None,
         )
 
-        self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
-        self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
-        self.gemma_expert.model.embed_tokens = None
+        # Store configs for later use
+        self._vlm_config_hf = vlm_config_hf
+        self._action_expert_config_hf = action_expert_config_hf
+
+        # Check if we should load from OpenPI checkpoint
+        if openpi_checkpoint is not None:
+            # Will load weights after model initialization
+            logger.info(f"Will load OpenPI checkpoint: {openpi_checkpoint}")
+            self._init_from_scratch(vlm_config_hf, action_expert_config_hf)
+            # Weights will be loaded by load_openpi_weights() called from Pi0Model
+        elif use_pretrained:
+            # Load from HuggingFace PaliGemma
+            pretrained_id = paligemma_pretrained_id or self.DEFAULT_PALIGEMMA_PRETRAINED
+            logger.info(f"Loading pretrained PaliGemma from: {pretrained_id}")
+            try:
+                self.paligemma = PaliGemmaForConditionalGeneration.from_pretrained(
+                    pretrained_id,
+                    token=hf_token,
+                    torch_dtype=torch.float32,
+                    low_cpu_mem_usage=True,
+                )
+                logger.info("Successfully loaded pretrained PaliGemma weights")
+
+                if use_adarms[0]:
+                    self.paligemma.config.text_config.use_adarms = True
+                    self.paligemma.config.text_config.adarms_cond_dim = vlm_config.width
+
+            except Exception as e:
+                logger.warning(f"Failed to load pretrained PaliGemma: {e}")
+                logger.warning("Falling back to random initialization")
+                self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
+
+            # Action Expert from scratch
+            logger.info("Initializing Action Expert from scratch")
+            self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
+            self.gemma_expert.model.embed_tokens = None
+        else:
+            self._init_from_scratch(vlm_config_hf, action_expert_config_hf)
 
         self.to_bfloat16_for_selected_params(precision)
+
+    def _init_from_scratch(self, vlm_config_hf, action_expert_config_hf):
+        """Initialize model from scratch (no pretrained weights)."""
+        logger.info("Initializing PaliGemma from scratch")
+        self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
+
+        logger.info("Initializing Action Expert from scratch")
+        self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
+        self.gemma_expert.model.embed_tokens = None
 
     def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
         if precision == "bfloat16":

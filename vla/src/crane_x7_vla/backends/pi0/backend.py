@@ -20,6 +20,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from accelerate import PartialState
+from peft import LoraConfig, get_peft_model
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
@@ -44,6 +45,9 @@ class Pi0TrainerConfig:
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     pretrained_checkpoint: str | None = None
+    use_pretrained: bool = True
+    paligemma_pretrained_id: str = "google/paligemma-3b-pt-224"
+    openpi_checkpoint: str | None = None  # e.g., "pi0_base", "pi05_base"
 
     # Data
     data_root_dir: str = ""
@@ -89,6 +93,16 @@ class Pi0TrainerConfig:
     # Freeze settings
     freeze_vlm: bool = True
     freeze_action_expert: bool = False
+
+    # LoRA settings
+    use_lora: bool = False
+    lora_rank: int = 32
+    lora_alpha: int = 16
+    lora_dropout: float = 0.05
+    lora_target_modules: list[str] | None = None
+    lora_apply_to_vlm: bool = False
+    lora_apply_to_expert: bool = True
+    lora_skip_merge_on_save: bool = True
 
     # Overfitting detection
     overfit_split_ratio: float = 0.1
@@ -147,6 +161,9 @@ class Pi0Trainer:
             action_horizon=cfg.action_horizon,
             max_token_len=cfg.max_token_len,
             dtype=cfg.precision,
+            use_pretrained=cfg.use_pretrained,
+            paligemma_pretrained_id=cfg.paligemma_pretrained_id,
+            openpi_checkpoint=cfg.openpi_checkpoint,
         )
         model = Pi0Model(model_config)
         model = model.to(device_id)
@@ -154,16 +171,74 @@ class Pi0Trainer:
         if cfg.gradient_checkpointing:
             model.gradient_checkpointing_enable()
 
-        # Freeze layers if specified
-        if cfg.freeze_vlm:
-            for _name, param in model.paligemma_with_expert.paligemma.named_parameters():
-                param.requires_grad = False
-            logger.info("Froze PaliGemma VLM weights")
+        # Apply LoRA if enabled
+        self.use_lora = cfg.use_lora
+        if cfg.use_lora:
+            # Default target modules for Gemma architecture
+            target_modules = cfg.lora_target_modules or [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ]
 
-        if cfg.freeze_action_expert:
-            for _name, param in model.paligemma_with_expert.gemma_expert.named_parameters():
-                param.requires_grad = False
-            logger.info("Froze Action Expert weights")
+            lora_config = LoraConfig(
+                r=cfg.lora_rank,
+                lora_alpha=cfg.lora_alpha,
+                lora_dropout=cfg.lora_dropout,
+                target_modules=target_modules,
+                init_lora_weights="gaussian",
+                bias="none",
+            )
+
+            # Apply LoRA to Action Expert (gemma_expert.model)
+            # Note: gemma_expert.model.embed_tokens is set to None in gemma_pytorch.py,
+            # which causes get_input_embeddings() to return None and breaks PEFT's
+            # prepare_model_for_gradient_checkpointing. We temporarily set a dummy embedding
+            # to work around this, then restore None after PEFT wrapping.
+            if cfg.lora_apply_to_expert:
+                gemma_model = model.paligemma_with_expert.gemma_expert.model
+                # Temporarily set dummy embed_tokens to satisfy PEFT's gradient checkpointing setup
+                hidden_size = gemma_model.config.hidden_size
+                model_device = next(gemma_model.parameters()).device
+                gemma_model.embed_tokens = torch.nn.Embedding(1, hidden_size, device=model_device)
+                # Apply LoRA
+                model.paligemma_with_expert.gemma_expert.model = get_peft_model(gemma_model, lora_config)
+                # Restore embed_tokens to None (access through base_model.model for PeftModel)
+                model.paligemma_with_expert.gemma_expert.model.base_model.model.embed_tokens = None
+                model.paligemma_with_expert.gemma_expert.model.print_trainable_parameters()
+                logger.info("Applied LoRA to Action Expert (gemma_expert.model)")
+
+            # Apply LoRA to VLM (paligemma language model) if specified
+            if cfg.lora_apply_to_vlm:
+                vlm_lora_config = LoraConfig(
+                    r=cfg.lora_rank,
+                    lora_alpha=cfg.lora_alpha,
+                    lora_dropout=cfg.lora_dropout,
+                    target_modules=target_modules,
+                    init_lora_weights="gaussian",
+                    bias="none",
+                )
+                vlm_model = model.paligemma_with_expert.paligemma.language_model
+                model.paligemma_with_expert.paligemma.language_model = get_peft_model(vlm_model, vlm_lora_config)
+                # Check if PeftModel was returned (has print_trainable_parameters method)
+                if hasattr(model.paligemma_with_expert.paligemma.language_model, "print_trainable_parameters"):
+                    model.paligemma_with_expert.paligemma.language_model.print_trainable_parameters()
+                logger.info("Applied LoRA to PaliGemma VLM")
+        else:
+            # Freeze layers if specified (only when not using LoRA)
+            if cfg.freeze_vlm:
+                for _name, param in model.paligemma_with_expert.paligemma.named_parameters():
+                    param.requires_grad = False
+                logger.info("Froze PaliGemma VLM weights")
+
+            if cfg.freeze_action_expert:
+                for _name, param in model.paligemma_with_expert.gemma_expert.named_parameters():
+                    param.requires_grad = False
+                logger.info("Froze Action Expert weights")
 
         # DDP
         if is_distributed:
@@ -424,6 +499,7 @@ class Pi0Trainer:
         path.mkdir(parents=True, exist_ok=True)
         model_to_save = model.module if is_distributed else model
 
+        # Save full checkpoint
         torch.save(
             {
                 "model_state_dict": model_to_save.state_dict(),
@@ -432,9 +508,30 @@ class Pi0Trainer:
                 "global_step": self.global_step,
                 "epoch": self.epoch,
                 "config": vars(self.cfg),
+                "use_lora": self.use_lora,
             },
             path / "checkpoint.pt",
         )
+
+        # Save LoRA adapters separately if using LoRA
+        if self.use_lora:
+            lora_save_dir = path / "lora_adapters"
+            lora_save_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save action expert LoRA adapters
+            # Note: LoRA is applied to gemma_expert.model (GemmaModel), not gemma_expert (GemmaForCausalLM)
+            if self.cfg.lora_apply_to_expert:
+                expert_lora_dir = lora_save_dir / "gemma_expert"
+                expert_lora_dir.mkdir(parents=True, exist_ok=True)
+                model_to_save.paligemma_with_expert.gemma_expert.model.save_pretrained(expert_lora_dir)
+                logger.info(f"Saved Action Expert LoRA adapters to {expert_lora_dir}")
+
+            # Save VLM LoRA adapters if applied
+            if self.cfg.lora_apply_to_vlm:
+                vlm_lora_dir = lora_save_dir / "paligemma_lm"
+                vlm_lora_dir.mkdir(parents=True, exist_ok=True)
+                model_to_save.paligemma_with_expert.paligemma.language_model.save_pretrained(vlm_lora_dir)
+                logger.info(f"Saved PaliGemma LM LoRA adapters to {vlm_lora_dir}")
 
         with (path / "config.json").open("w") as f:
             json.dump(vars(self.cfg), f, indent=2, default=str)
@@ -467,11 +564,22 @@ class Pi0Backend(VLABackend):
         cfg = self.config
         pi0_cfg = cfg.pi0
 
+        # Use unified LoRA config, with Pi0-specific fallbacks
+        use_lora = cfg.lora.enabled if hasattr(cfg, "lora") else pi0_cfg.use_lora
+        lora_rank = cfg.lora.rank if hasattr(cfg, "lora") else pi0_cfg.lora_rank
+        lora_alpha = cfg.lora.alpha if hasattr(cfg, "lora") else pi0_cfg.lora_alpha
+        lora_dropout = cfg.lora.dropout if hasattr(cfg, "lora") else pi0_cfg.lora_dropout
+        lora_target_modules = cfg.lora.target_modules if hasattr(cfg, "lora") else None
+        lora_skip_merge = cfg.lora.skip_merge_on_save if hasattr(cfg, "lora") else True
+
         return Pi0TrainerConfig(
             model_type=pi0_cfg.model_type,
             paligemma_variant=pi0_cfg.paligemma_variant,
             action_expert_variant=pi0_cfg.action_expert_variant,
             pretrained_checkpoint=pi0_cfg.pretrained_checkpoint,
+            use_pretrained=pi0_cfg.use_pretrained,
+            paligemma_pretrained_id=pi0_cfg.paligemma_pretrained_id,
+            openpi_checkpoint=pi0_cfg.openpi_checkpoint,
             data_root_dir=str(cfg.data.data_root),
             output_dir=str(cfg.output_dir) if cfg.output_dir else "",
             dataset_name=cfg.experiment_name,
@@ -497,6 +605,16 @@ class Pi0Backend(VLABackend):
             camera_names=pi0_cfg.camera_names,
             freeze_vlm=pi0_cfg.freeze_vlm,
             freeze_action_expert=pi0_cfg.freeze_action_expert,
+            # LoRA settings
+            use_lora=use_lora,
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_target_modules=lora_target_modules,
+            lora_apply_to_vlm=not pi0_cfg.freeze_vlm,  # Apply LoRA to VLM only if not frozen
+            lora_apply_to_expert=not pi0_cfg.freeze_action_expert,  # Apply LoRA to expert only if not frozen
+            lora_skip_merge_on_save=lora_skip_merge,
+            # Other settings
             overfit_split_ratio=cfg.overfitting.overfit_split_ratio,
             overfit_check_interval=cfg.overfitting.overfit_check_interval,
             overfit_check_steps=cfg.overfitting.overfit_check_steps,
@@ -687,7 +805,7 @@ class Pi0Backend(VLABackend):
 
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
-        # Create model
+        # Create model (use_pretrained=False since we're loading from checkpoint)
         model_config = Pi0ModelConfig(
             pi05=self.config.pi0.pi05,
             paligemma_variant=self.config.pi0.paligemma_variant,
@@ -696,6 +814,7 @@ class Pi0Backend(VLABackend):
             action_horizon=self._action_horizon,
             max_token_len=self.config.pi0.max_token_len,
             dtype=self.config.pi0.precision,
+            use_pretrained=False,  # Skip pretrained loading when restoring from checkpoint
         )
         self.model = Pi0Model(model_config)
         self.model.load_state_dict(checkpoint["model_state_dict"])
