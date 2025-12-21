@@ -171,6 +171,7 @@ class VLAInferenceNode(Node):
         self.get_logger().info('VLA Inference Node initialized')
         self.get_logger().info(f'Model: {model_path}')
         self.get_logger().info(f'Task: {self.task_instruction}')
+        self.get_logger().info(f'Image topic: {self.image_topic}')
         self.get_logger().info(f'Inference rate: {self.inference_rate} Hz')
 
     def _image_callback(self, msg: Image) -> None:
@@ -228,7 +229,10 @@ class VLAInferenceNode(Node):
             return
 
         if self.latest_image is None:
-            self.get_logger().warn('No image received yet', throttle_duration_sec=5.0)
+            self.get_logger().warn(
+                f'No image received yet (topic: {self.image_topic})',
+                throttle_duration_sec=5.0
+            )
             return
 
         # Extract robot state from joint states
