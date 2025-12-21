@@ -180,13 +180,16 @@ def merge_pi0_lora(
     vlm_lora_path = adapter_path / "paligemma_lm"
 
     # Load and merge expert LoRA
+    # Note: LoRA is applied to gemma_expert.model (GemmaModel), not gemma_expert (GemmaForCausalLM)
     if expert_lora_path.exists():
         print(f"Loading and merging Expert LoRA from {expert_lora_path}...")
-        model.paligemma_with_expert.gemma_expert = PeftModel.from_pretrained(
-            model.paligemma_with_expert.gemma_expert,
+        model.paligemma_with_expert.gemma_expert.model = PeftModel.from_pretrained(
+            model.paligemma_with_expert.gemma_expert.model,
             expert_lora_path,
         )
-        model.paligemma_with_expert.gemma_expert = model.paligemma_with_expert.gemma_expert.merge_and_unload()
+        model.paligemma_with_expert.gemma_expert.model = (
+            model.paligemma_with_expert.gemma_expert.model.merge_and_unload()
+        )
         print("  Merged Expert LoRA successfully")
 
     # Load and merge VLM LoRA if present

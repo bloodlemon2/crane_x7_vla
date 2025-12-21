@@ -188,13 +188,17 @@ class Pi0Trainer:
                 bias="none",
             )
 
-            # Apply LoRA to Action Expert (gemma_expert)
+            # Apply LoRA to Action Expert (gemma_expert.model)
+            # Note: We apply to gemma_expert.model (GemmaModel) instead of gemma_expert (GemmaForCausalLM)
+            # because gemma_expert.model.embed_tokens is set to None in gemma_pytorch.py,
+            # which causes get_input_embeddings() to return None and breaks PEFT's
+            # prepare_model_for_gradient_checkpointing.
             if cfg.lora_apply_to_expert:
-                model.paligemma_with_expert.gemma_expert = get_peft_model(
-                    model.paligemma_with_expert.gemma_expert, lora_config
+                model.paligemma_with_expert.gemma_expert.model = get_peft_model(
+                    model.paligemma_with_expert.gemma_expert.model, lora_config
                 )
-                model.paligemma_with_expert.gemma_expert.print_trainable_parameters()
-                logger.info("Applied LoRA to Action Expert (gemma_expert)")
+                model.paligemma_with_expert.gemma_expert.model.print_trainable_parameters()
+                logger.info("Applied LoRA to Action Expert (gemma_expert.model)")
 
             # Apply LoRA to VLM (paligemma language model) if specified
             if cfg.lora_apply_to_vlm:
@@ -502,10 +506,11 @@ class Pi0Trainer:
             lora_save_dir.mkdir(parents=True, exist_ok=True)
 
             # Save action expert LoRA adapters
+            # Note: LoRA is applied to gemma_expert.model (GemmaModel), not gemma_expert (GemmaForCausalLM)
             if self.cfg.lora_apply_to_expert:
                 expert_lora_dir = lora_save_dir / "gemma_expert"
                 expert_lora_dir.mkdir(parents=True, exist_ok=True)
-                model_to_save.paligemma_with_expert.gemma_expert.save_pretrained(expert_lora_dir)
+                model_to_save.paligemma_with_expert.gemma_expert.model.save_pretrained(expert_lora_dir)
                 logger.info(f"Saved Action Expert LoRA adapters to {expert_lora_dir}")
 
             # Save VLM LoRA adapters if applied
