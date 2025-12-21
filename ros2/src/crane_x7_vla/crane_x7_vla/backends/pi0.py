@@ -453,12 +453,17 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         Cache is valid if:
         1. Cache exists
         2. Instruction matches
-        3. Image hash matches (same image)
-        4. Cache index is within usable range
+        3. Cache index is within usable range
+
+        Note: We intentionally do NOT check image_hash here.
+        Flow matching generates actions from random noise, so re-running
+        inference on every frame causes oscillating behavior.
+        The action chunk should be used for chunk_use_count steps,
+        then a new inference with the current image will be performed.
 
         Args:
             instruction: Current task instruction
-            image_hash: Hash of current image
+            image_hash: Hash of current image (unused, kept for API compatibility)
 
         Returns:
             True if cached action can be used
@@ -466,8 +471,6 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         if self._action_cache is None:
             return False
         if self._cache_instruction != instruction:
-            return False
-        if self._cache_image_hash != image_hash:
             return False
         if self._cache_index >= self._chunk_use_count:
             return False
