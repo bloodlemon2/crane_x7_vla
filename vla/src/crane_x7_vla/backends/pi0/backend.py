@@ -189,14 +189,20 @@ class Pi0Trainer:
             )
 
             # Apply LoRA to Action Expert (gemma_expert.model)
-            # Note: We apply to gemma_expert.model (GemmaModel) instead of gemma_expert (GemmaForCausalLM)
-            # because gemma_expert.model.embed_tokens is set to None in gemma_pytorch.py,
+            # Note: gemma_expert.model.embed_tokens is set to None in gemma_pytorch.py,
             # which causes get_input_embeddings() to return None and breaks PEFT's
-            # prepare_model_for_gradient_checkpointing.
+            # prepare_model_for_gradient_checkpointing. We temporarily set a dummy embedding
+            # to work around this, then restore None after PEFT wrapping.
             if cfg.lora_apply_to_expert:
-                model.paligemma_with_expert.gemma_expert.model = get_peft_model(
-                    model.paligemma_with_expert.gemma_expert.model, lora_config
-                )
+                gemma_model = model.paligemma_with_expert.gemma_expert.model
+                # Temporarily set dummy embed_tokens to satisfy PEFT's gradient checkpointing setup
+                hidden_size = gemma_model.config.hidden_size
+                model_device = next(gemma_model.parameters()).device
+                gemma_model.embed_tokens = torch.nn.Embedding(1, hidden_size, device=model_device)
+                # Apply LoRA
+                model.paligemma_with_expert.gemma_expert.model = get_peft_model(gemma_model, lora_config)
+                # Restore embed_tokens to None (access through base_model.model for PeftModel)
+                model.paligemma_with_expert.gemma_expert.model.base_model.model.embed_tokens = None
                 model.paligemma_with_expert.gemma_expert.model.print_trainable_parameters()
                 logger.info("Applied LoRA to Action Expert (gemma_expert.model)")
 
