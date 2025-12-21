@@ -222,17 +222,21 @@ def _load_jax_checkpoint(checkpoint_path: pathlib.Path) -> dict:
     if not params_path.exists():
         params_path = checkpoint_path
 
-    with ocp.PyTreeCheckpointer() as ckptr:
-        metadata = ckptr.metadata(params_path)
-        item = {"params": metadata["params"]}
+    # Use StandardCheckpointer for simpler restoration
+    checkpointer = ocp.StandardCheckpointer()
 
-        params = ckptr.restore(
-            params_path,
-            ocp.args.PyTreeRestore(
-                item=item,
-                restore_args=None,
-            ),
-        )["params"]
+    # Restore without specifying item structure (let orbax infer it)
+    try:
+        # Try restoring directly
+        restored = checkpointer.restore(params_path)
+    except Exception as e:
+        logger.warning(f"StandardCheckpointer failed: {e}, trying PyTreeCheckpointer")
+        # Fallback to PyTreeCheckpointer with abstract restore
+        with ocp.PyTreeCheckpointer() as ckptr:
+            restored = ckptr.restore(params_path)
+
+    # Handle different checkpoint structures
+    params = restored.get("params", restored) if isinstance(restored, dict) else restored
 
     # Flatten and remove 'value' suffix if present
     flat_params = _flatten_dict(params, sep="/")
