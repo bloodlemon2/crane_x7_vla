@@ -324,3 +324,7 @@ ls -la outputs/crane_x7_vla_rl/checkpoint_best/
 - `config.yaml`
 - `policy_state_dict.pt`
 - `optimizer_state_dict.pt`（再開時のみ）
+
+## ライセンス
+
+- **オリジナルコード**: MIT License（Copyright 2025 nop）

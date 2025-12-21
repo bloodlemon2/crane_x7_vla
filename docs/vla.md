@@ -343,12 +343,34 @@ Pi0とPi0.5は同じバックエンドクラスで`model_type`設定により切
 | `discrete_state_input` | false/true | 離散状態入力（Pi0.5で自動true） |
 | `num_denoise_steps` | 10 | Flow Matchingデノイズステップ |
 | `normalize_actions` | true | アクション正規化 |
-| `normalization_mode` | `quantile` | 正規化モード（`quantile`/`zscore`） |
-| `quantile_low` | 0.01 | Quantile正規化下限 |
-| `quantile_high` | 0.99 | Quantile正規化上限 |
+| `normalization_mode` | `quantile` | 正規化モード（`quantile`または`zscore`） |
+| `quantile_low` | 0.01 | Quantile正規化下限（normalization_mode=quantile時） |
+| `quantile_high` | 0.99 | Quantile正規化上限（normalization_mode=quantile時） |
+| `use_delta_actions` | false | デルタアクション（action = next_state - current_state）を使用 |
 | `freeze_vlm` | true | VLM（PaliGemma）を凍結 |
 | `freeze_action_expert` | false | アクション専門家を凍結 |
 | `precision` | `bfloat16` | 計算精度 |
+| `openpi_checkpoint` | null | OpenPIチェックポイント名（下記参照） |
+
+#### OpenPIチェックポイント（Pi0/Pi0.5）
+
+事前学習済みPi0/Pi0.5モデルを使用できます。`openpi_checkpoint`に以下のいずれかを指定：
+
+| チェックポイント名 | 説明 |
+|------------------|------|
+| `pi0_base` | 基本Pi0モデル（ファインチューニング用） |
+| `pi05_base` | 基本Pi0.5モデル（ファインチューニング用） |
+| `pi0_droid` | DROIDデータセットで学習済みPi0 |
+| `pi05_droid` | DROIDデータセットで学習済みPi0.5 |
+
+**使用例:**
+
+```bash
+python -m crane_x7_vla.training.cli train pi0 \
+  --data-root /workspace/data/tfrecord_logs \
+  --experiment-name crane_x7_pi0 \
+  --openpi-checkpoint pi0_base
+```
 
 #### カメラ設定（Pi0/Pi0.5）
 
@@ -453,12 +475,44 @@ parameters:
     max: 0.2
 ```
 
-### Slurmクラスターでの実行
+### Sweepエージェントの実行
+
+VLAトレーニングCLIにはW&B Sweepエージェント機能が組み込まれています：
 
 ```bash
-cd ../slurm
-slurm-submit sweep start examples/sweeps/sweep_openvla.yaml --max-runs 10
+# Pi0.5でSweepエージェントを実行
+python -m crane_x7_vla.training.cli agent pi0.5 \
+  --sweep-id <SWEEP_ID> \
+  --entity <WANDB_ENTITY> \
+  --project <WANDB_PROJECT> \
+  --data-root /workspace/data/tfrecord_logs \
+  --output-dir /workspace/outputs/checkpoints \
+  --training-max-steps 10000
+
+# OpenVLAでSweepエージェントを実行
+python -m crane_x7_vla.training.cli agent openvla \
+  --sweep-id abc123xyz \
+  --entity myteam \
+  --project crane-x7-sweep \
+  --data-root /workspace/data/tfrecord_logs
 ```
+
+### lifterでの実行（Slurmクラスター）
+
+```bash
+cd lifter
+
+# リモートSlurmクラスターでSweep開始
+lifter sweep start examples/sweeps/sweep_openvla.yaml --max-runs 10
+
+# ローカル環境でSweep実行
+lifter sweep start examples/sweeps/sweep_pi0.yaml \
+  --local \
+  --template examples/templates_local/pi0_sweep.sh \
+  --max-runs 5
+```
+
+詳細は[lifter.md](lifter.md)を参照。
 
 ## 推論（ROS 2統合）
 
@@ -593,5 +647,6 @@ export TF_CPP_MIN_LOG_LEVEL=2
 ## ライセンス
 
 - **オリジナルコード**: MIT License（Copyright 2025 nop）
-- **OpenVLA**: MIT License
+- **OpenVLA**: MIT License（コード部分）
+  - 事前学習済みモデルには別途制限あり（Llama-2ライセンス等）
 - **OpenPI**: Apache License 2.0

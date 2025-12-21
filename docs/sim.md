@@ -87,6 +87,7 @@ class SimulatorConfig:
     sim_rate: float = 30.0                # Hz
     max_episode_steps: int = 200
     robot_init_qpos_noise: float = 0.02
+    n_envs: int = 1                       # 並列環境数（バッチ並列化）
 ```
 
 ### Simulator
@@ -135,3 +136,9 @@ class MySimulator(Simulator):
 
     # 抽象メソッドを実装...
 ```
+
+## ライセンス
+
+- **オリジナルコード（lift、lift_maniskill、lift_genesis）**: MIT License（Copyright 2025 nop）
+- **ManiSkill**: Apache License 2.0
+- **Genesis**: Apache License 2.0
