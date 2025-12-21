@@ -187,8 +187,8 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
     def _import_pi0_classes(self):
         """Import Pi0 model classes, handling path setup.
 
-        Uses importlib.util to directly load the VLA package's pi0 model,
-        avoiding namespace conflicts with the ROS 2 package's pi0.py file.
+        Uses importlib to load the VLA package's pi0 module with proper
+        package context for relative imports.
 
         Returns:
             Tuple of (Pi0Model, Pi0ModelConfig) classes
@@ -196,18 +196,69 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         import importlib.util
 
         vla_path = get_vla_path()
-        model_file = vla_path / "src" / "crane_x7_vla" / "backends" / "pi0" / "model.py"
+        vla_src_path = str(vla_path / "src")
+        pi0_package_path = vla_path / "src" / "crane_x7_vla" / "backends" / "pi0"
 
+        # Add VLA src to sys.path for submodule imports
+        if vla_src_path not in sys.path:
+            sys.path.insert(0, vla_src_path)
+            self.logger.info(f"Added {vla_src_path} to sys.path")
+
+        # Register parent packages in sys.modules to enable relative imports
+        # Use 'vla_' prefix to avoid collision with ROS 2 crane_x7_vla package
+        package_prefix = "vla_crane_x7_vla"
+
+        # Create and register parent package hierarchy
+        self._register_package(f"{package_prefix}", vla_path / "src" / "crane_x7_vla")
+        self._register_package(f"{package_prefix}.backends", vla_path / "src" / "crane_x7_vla" / "backends")
+        self._register_package(f"{package_prefix}.backends.pi0", pi0_package_path)
+        self._register_package(f"{package_prefix}.backends.pi0.models_pytorch", pi0_package_path / "models_pytorch")
+
+        # Now load the model module with proper package context
+        model_file = pi0_package_path / "model.py"
         if not model_file.exists():
             raise ImportError(f"Pi0 model file not found: {model_file}")
 
-        # Load module directly using importlib.util
-        spec = importlib.util.spec_from_file_location("pi0_model", model_file)
-        pi0_model_module = importlib.util.module_from_spec(spec)
-        sys.modules["pi0_model"] = pi0_model_module
-        spec.loader.exec_module(pi0_model_module)
+        spec = importlib.util.spec_from_file_location(
+            f"{package_prefix}.backends.pi0.model",
+            model_file,
+            submodule_search_locations=[str(pi0_package_path)]
+        )
+        module = importlib.util.module_from_spec(spec)
+        module.__package__ = f"{package_prefix}.backends.pi0"
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
 
-        return pi0_model_module.Pi0Model, pi0_model_module.Pi0ModelConfig
+        return module.Pi0Model, module.Pi0ModelConfig
+
+    def _register_package(self, name: str, path: Path) -> None:
+        """Register a package in sys.modules for relative import support."""
+        import importlib.util
+        import types
+
+        if name in sys.modules:
+            return
+
+        # Create a module object for the package
+        init_file = path / "__init__.py"
+        if init_file.exists():
+            spec = importlib.util.spec_from_file_location(
+                name, init_file,
+                submodule_search_locations=[str(path)]
+            )
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[name] = module
+            try:
+                spec.loader.exec_module(module)
+            except Exception:
+                # If __init__.py fails, create empty module
+                pass
+        else:
+            # Create empty package module
+            module = types.ModuleType(name)
+            module.__path__ = [str(path)]
+            module.__package__ = name
+            sys.modules[name] = module
 
     def _load_tokenizer(self) -> None:
         """Load Gemma tokenizer for language encoding."""
