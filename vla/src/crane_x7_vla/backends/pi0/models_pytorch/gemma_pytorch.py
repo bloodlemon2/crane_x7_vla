@@ -8,11 +8,11 @@ from typing import Literal
 
 import torch
 from torch import nn
-from transformers import PaliGemmaForConditionalGeneration
 from transformers.cache_utils import Cache
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.gemma import modeling_gemma
 from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
+from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
 
 
 class PaliGemmaWithExpertModel(nn.Module):
