@@ -280,6 +280,24 @@ lifter sweep status <sweep_id> [OPTIONS]
 lifter sweep status abc123def
 ```
 
+### VLA CLIのagentコマンド
+
+VLAトレーニングCLIには組み込みのW&B Sweepエージェント機能があります。lifterのsweepと組み合わせて使用：
+
+```bash
+# VLA CLIのagentコマンドを直接使用
+python -m crane_x7_vla.training.cli agent pi0.5 \
+  --sweep-id <SWEEP_ID> \
+  --entity <WANDB_ENTITY> \
+  --project <WANDB_PROJECT> \
+  --data-root /workspace/data/tfrecord_logs
+
+# lifterでSweepを開始し、VLA CLIのagentが実行される
+lifter sweep start examples/sweeps/sweep_pi0.yaml \
+  --local \
+  --template examples/templates_local/pi0_sweep.sh
+```
+
 ### Sweep設定ファイル例
 
 ```yaml
@@ -287,8 +305,8 @@ lifter sweep status abc123def
 program: train.py
 method: bayes
 metric:
-  name: eval/success_rate
-  goal: maximize
+  name: eval/loss
+  goal: minimize
 parameters:
   learning_rate:
     distribution: log_uniform_values
@@ -464,3 +482,7 @@ WandbSweepError: Failed to create sweep
 
 - `--timeout`オプションで延長
 - `SLURM_POLL_INTERVAL`を調整
+
+## ライセンス
+
+- **オリジナルコード**: MIT License（Copyright 2025 nop）

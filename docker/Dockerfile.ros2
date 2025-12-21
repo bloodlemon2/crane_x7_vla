@@ -85,6 +85,12 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 # Copy VLA source code for model loading (OpenVLA, Pi0, etc.)
 COPY vla/src /workspace/vla/src
 
+# Install transformers_replace for Pi0/Pi0.5 (OpenPI compatibility)
+# This patches transformers with custom GemmaRMSNorm (adaRMS support) and
+# eager_attention_forward (joint layer-by-layer attention)
+RUN cp -r /workspace/vla/src/crane_x7_vla/backends/pi0/models_pytorch/transformers_replace/* \
+    /usr/local/lib/python3.10/dist-packages/transformers/
+
 # Copy ManiSkill CRANE-X7 environment
 COPY sim/src /workspace/sim/src
 

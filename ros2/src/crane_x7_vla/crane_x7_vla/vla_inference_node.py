@@ -7,8 +7,12 @@
 This node uses create_inference_core factory to automatically select
 the appropriate inference backend (OpenVLA or Pi0/Pi0.5) based on
 the model type detected from the checkpoint.
+
+Model loading is performed in a background thread to prevent
+ROS 2 communication timeouts during initialization.
 """
 
+import threading
 from typing import Optional
 
 import numpy as np
@@ -106,6 +110,10 @@ class VLAInferenceNode(Node):
         self.latest_image: Optional[np.ndarray] = None
         self.latest_joint_state: Optional[JointState] = None
 
+        # Model loading state
+        self._model_loading = False
+        self._model_load_error: Optional[str] = None
+
         # Create logger adapter for inference core
         logger_adapter = ROS2LoggerAdapter(self.get_logger())
 
@@ -122,9 +130,10 @@ class VLAInferenceNode(Node):
             action_dim=self.robot_config.action_dim,
         )
 
-        # Load model
-        if not self.vla_core.load_model():
-            self.get_logger().error('Failed to load VLA model')
+        # Start model loading in background thread to prevent ROS 2 timeout
+        self._model_loading = True
+        self._load_thread = threading.Thread(target=self._load_model_background, daemon=True)
+        self._load_thread.start()
 
         # Setup subscriptions
         self.image_sub = self.create_subscription(
@@ -162,6 +171,7 @@ class VLAInferenceNode(Node):
         self.get_logger().info('VLA Inference Node initialized')
         self.get_logger().info(f'Model: {model_path}')
         self.get_logger().info(f'Task: {self.task_instruction}')
+        self.get_logger().info(f'Image topic: {self.image_topic}')
         self.get_logger().info(f'Inference rate: {self.inference_rate} Hz')
 
     def _image_callback(self, msg: Image) -> None:
@@ -187,13 +197,42 @@ class VLAInferenceNode(Node):
         self.task_instruction = msg.data
         self.get_logger().info(f'Updated task instruction: {self.task_instruction}')
 
+    def _load_model_background(self) -> None:
+        """Load VLA model in background thread.
+
+        This prevents ROS 2 communication timeouts during model initialization.
+        """
+        try:
+            if not self.vla_core.load_model():
+                self._model_load_error = 'Failed to load VLA model'
+        except Exception as e:
+            self._model_load_error = str(e)
+        finally:
+            self._model_loading = False
+
     def _inference_callback(self) -> None:
         """Perform VLA inference and publish action."""
+        # Check if model is still loading
+        if self._model_loading:
+            self.get_logger().info('Model loading in progress...', throttle_duration_sec=5.0)
+            return
+
+        # Check for loading errors
+        if self._model_load_error:
+            self.get_logger().error(
+                f'Model load error: {self._model_load_error}',
+                throttle_duration_sec=10.0
+            )
+            return
+
         if not self.vla_core.is_loaded:
             return
 
         if self.latest_image is None:
-            self.get_logger().warn('No image received yet', throttle_duration_sec=5.0)
+            self.get_logger().warn(
+                f'No image received yet (topic: {self.image_topic})',
+                throttle_duration_sec=5.0
+            )
             return
 
         # Extract robot state from joint states

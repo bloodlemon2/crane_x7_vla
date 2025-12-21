@@ -10,6 +10,7 @@ Uses PaliGemma + Expert Gemma architecture with flow matching.
 
 import json
 import logging
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -535,6 +536,13 @@ class Pi0Trainer:
 
         with (path / "config.json").open("w") as f:
             json.dump(vars(self.cfg), f, indent=2, default=str)
+
+        # Copy dataset_statistics.json for inference
+        data_root = Path(self.cfg.data_root_dir)
+        stats_file = data_root / "dataset_statistics.json"
+        if stats_file.exists():
+            shutil.copy(stats_file, path / "dataset_statistics.json")
+            logger.info("Copied dataset_statistics.json to checkpoint")
 
         logger.info(f"Saved checkpoint to {path}")
 

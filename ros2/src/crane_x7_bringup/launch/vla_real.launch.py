@@ -56,8 +56,13 @@ def generate_launch_description():
         description='Device to run inference on (cuda or cpu)'
     )
 
+    declare_image_topic = DeclareLaunchArgument(
+        'image_topic',
+        default_value='/camera/color/image_raw',
+        description='RGB image topic for VLA inference'
+    )
+
     # Include crane_x7_examples demo (robot control + MoveIt2 + RealSense)
-    # This launches RealSense with camera_namespace='' (topic: /camera/camera/color/image_raw)
     demo_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             get_package_share_directory('crane_x7_examples'),
@@ -70,7 +75,6 @@ def generate_launch_description():
     )
 
     # Include VLA control nodes from crane_x7_vla
-    # Note: image_topic is set to /camera/camera/color/image_raw to match demo.launch.py
     vla_control_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
@@ -83,7 +87,7 @@ def generate_launch_description():
             'model_path': LaunchConfiguration('model_path'),
             'task_instruction': LaunchConfiguration('task_instruction'),
             'device': LaunchConfiguration('device'),
-            'image_topic': '/camera/camera/color/image_raw',
+            'image_topic': LaunchConfiguration('image_topic'),
         }.items()
     )
 
@@ -93,6 +97,7 @@ def generate_launch_description():
         declare_use_d435,
         declare_task_instruction,
         declare_device,
+        declare_image_topic,
         demo_launch,
         vla_control_launch,
     ])

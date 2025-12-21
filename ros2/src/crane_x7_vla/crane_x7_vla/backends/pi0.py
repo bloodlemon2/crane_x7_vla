@@ -94,6 +94,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         self._action_cache: Optional[np.ndarray] = None  # [horizon, action_dim]
         self._cache_index: int = 0  # Current index in cached chunk
         self._cache_instruction: Optional[str] = None  # Instruction for cached chunk
+        self._cache_image_hash: Optional[int] = None  # Image hash for cached chunk
         self._chunk_use_count: int = chunk_use_count  # Actions to use per chunk
 
     def load_model(self) -> bool:
@@ -143,6 +144,11 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
 
             # Create model config - use float32 for inference to avoid dtype mismatches
             # Settings aligned with vla/src/crane_x7_vla/backends/pi0/config.py
+            # Include openpi_checkpoint to ensure correct model architecture (vocab_size, etc.)
+            openpi_checkpoint = self.config.get('openpi_checkpoint', None)
+            if openpi_checkpoint:
+                self.logger.info(f'Using OpenPI checkpoint for model architecture: {openpi_checkpoint}')
+
             model_config = Pi0ModelConfig(
                 pi05=is_pi05,
                 paligemma_variant=self.config.get('paligemma_variant', 'gemma_2b'),
@@ -151,22 +157,29 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
                 action_horizon=self.config.get('action_horizon', 50),
                 max_token_len=self.config.get('max_token_len', defaults['max_token_len']),
                 dtype='float32',  # Use float32 for inference stability
+                use_pretrained=False,  # Skip HuggingFace pretrained loading
+                openpi_checkpoint=openpi_checkpoint,  # Use OpenPI checkpoint for correct vocab_size
             )
 
-            # Create and load model
+            # Create model (OpenPI checkpoint will be loaded if specified for correct architecture)
             self.model = Pi0Model(model_config)
+            # Load finetuned weights (overwriting OpenPI base weights)
             self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
             self.model = self.model.to(device=self.device, dtype=torch.float32)
             self.model.eval()
 
             # Log model configuration details
             discrete_state = self.config.get('discrete_state_input', defaults['discrete_state_input'])
+            image_size = self.config.get('image_size', (224, 224))
+            camera_names = self.config.get('camera_names', ['base_0_rgb'])
             self.logger.info(
                 f'Model loaded: pi05={model_config.pi05}, '
                 f'action_dim={model_config.action_dim}, '
                 f'action_horizon={model_config.action_horizon}, '
                 f'max_token_len={model_config.max_token_len}, '
-                f'discrete_state_input={discrete_state}'
+                f'discrete_state_input={discrete_state}, '
+                f'image_size={image_size}, '
+                f'num_cameras={len(camera_names)}'
             )
 
             # Load tokenizer for language processing
@@ -187,8 +200,8 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
     def _import_pi0_classes(self):
         """Import Pi0 model classes, handling path setup.
 
-        Uses importlib.util to directly load the VLA package's pi0 model,
-        avoiding namespace conflicts with the ROS 2 package's pi0.py file.
+        Uses importlib to load the VLA package's pi0 module with proper
+        package context for relative imports.
 
         Returns:
             Tuple of (Pi0Model, Pi0ModelConfig) classes
@@ -196,18 +209,69 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         import importlib.util
 
         vla_path = get_vla_path()
-        model_file = vla_path / "src" / "crane_x7_vla" / "backends" / "pi0" / "model.py"
+        vla_src_path = str(vla_path / "src")
+        pi0_package_path = vla_path / "src" / "crane_x7_vla" / "backends" / "pi0"
 
+        # Add VLA src to sys.path for submodule imports
+        if vla_src_path not in sys.path:
+            sys.path.insert(0, vla_src_path)
+            self.logger.info(f"Added {vla_src_path} to sys.path")
+
+        # Register parent packages in sys.modules to enable relative imports
+        # Use 'vla_' prefix to avoid collision with ROS 2 crane_x7_vla package
+        package_prefix = "vla_crane_x7_vla"
+
+        # Create and register parent package hierarchy
+        self._register_package(f"{package_prefix}", vla_path / "src" / "crane_x7_vla")
+        self._register_package(f"{package_prefix}.backends", vla_path / "src" / "crane_x7_vla" / "backends")
+        self._register_package(f"{package_prefix}.backends.pi0", pi0_package_path)
+        self._register_package(f"{package_prefix}.backends.pi0.models_pytorch", pi0_package_path / "models_pytorch")
+
+        # Now load the model module with proper package context
+        model_file = pi0_package_path / "model.py"
         if not model_file.exists():
             raise ImportError(f"Pi0 model file not found: {model_file}")
 
-        # Load module directly using importlib.util
-        spec = importlib.util.spec_from_file_location("pi0_model", model_file)
-        pi0_model_module = importlib.util.module_from_spec(spec)
-        sys.modules["pi0_model"] = pi0_model_module
-        spec.loader.exec_module(pi0_model_module)
+        spec = importlib.util.spec_from_file_location(
+            f"{package_prefix}.backends.pi0.model",
+            model_file,
+            submodule_search_locations=[str(pi0_package_path)]
+        )
+        module = importlib.util.module_from_spec(spec)
+        module.__package__ = f"{package_prefix}.backends.pi0"
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
 
-        return pi0_model_module.Pi0Model, pi0_model_module.Pi0ModelConfig
+        return module.Pi0Model, module.Pi0ModelConfig
+
+    def _register_package(self, name: str, path: Path) -> None:
+        """Register a package in sys.modules for relative import support."""
+        import importlib.util
+        import types
+
+        if name in sys.modules:
+            return
+
+        # Create a module object for the package
+        init_file = path / "__init__.py"
+        if init_file.exists():
+            spec = importlib.util.spec_from_file_location(
+                name, init_file,
+                submodule_search_locations=[str(path)]
+            )
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[name] = module
+            try:
+                spec.loader.exec_module(module)
+            except Exception:
+                # If __init__.py fails, create empty module
+                pass
+        else:
+            # Create empty package module
+            module = types.ModuleType(name)
+            module.__path__ = [str(path)]
+            module.__package__ = name
+            sys.modules[name] = module
 
     def _load_tokenizer(self) -> None:
         """Load Gemma tokenizer for language encoding."""
@@ -239,14 +303,21 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
 
         # Add data_root_dir from checkpoint config if available
         # Pi0TrainerConfig stores 'data_root_dir' (aligned with backend.py)
+        # Translate training paths (/root/vla/) to inference paths (/workspace/)
         if self.config:
             data_root = self.config.get('data_root_dir')
             if data_root:
+                # Translate /root/vla/ -> /workspace/ for inference environment
+                if data_root.startswith('/root/vla/'):
+                    data_root = data_root.replace('/root/vla/', '/workspace/')
                 data_root_path = Path(data_root)
                 stats_paths.append(data_root_path / "dataset_statistics.json")
-                # Also check parent directory
-                if data_root_path.parent.exists():
-                    stats_paths.append(data_root_path.parent / "dataset_statistics.json")
+                # Also check parent directory (with permission error handling)
+                try:
+                    if data_root_path.parent.exists():
+                        stats_paths.append(data_root_path.parent / "dataset_statistics.json")
+                except PermissionError:
+                    pass  # Skip inaccessible paths
 
         # Add Docker workspace paths as fallback
         workspace_data_dirs = [
@@ -308,8 +379,11 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             self.logger.error('Tokenizer not loaded')
             return None
 
+        # Compute image hash for cache validation
+        image_hash = compute_image_hash(image)
+
         # Check if we can use cached action (fast path)
-        if self._can_use_cached_action(instruction):
+        if self._can_use_cached_action(instruction, image_hash):
             action = self._get_cached_action(log_callback)
             if log_callback:
                 log_callback(f'Final predicted action (cached): {action}')
@@ -319,7 +393,6 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         try:
             # Debug logging
             if log_callback:
-                image_hash = compute_image_hash(image)
                 log_callback(
                     f'Pi0 inference (new prediction): image_shape={image.shape}, '
                     f'image_hash={image_hash:04d}, '
@@ -341,10 +414,16 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             # Prepare state (normalize and pad to 32-dim)
             state_tensor = self._prepare_state(state, log_callback)
 
+            # Replicate image for all camera views (model trained with multiple cameras)
+            camera_names = self.config.get('camera_names', ['base_0_rgb'])
+            num_cameras = len(camera_names)
+            images = [image_tensor] * num_cameras
+            img_masks = [torch.tensor([True], device=self.device)] * num_cameras
+
             # Run flow matching inference
             action_chunk = self.model.sample_actions(
-                images=[image_tensor],
-                img_masks=[torch.tensor([True], device=self.device)],
+                images=images,
+                img_masks=img_masks,
                 lang_tokens=lang_tokens,
                 lang_masks=lang_masks,
                 state=state_tensor,
@@ -352,7 +431,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             )
 
             # Cache the action chunk for future use
-            self._cache_action_chunk(action_chunk, instruction, log_callback)
+            self._cache_action_chunk(action_chunk, instruction, image_hash, log_callback)
 
             # Return the first action from cache
             action = self._get_cached_action(log_callback)
@@ -368,7 +447,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             self.logger.error(traceback.format_exc())
             return None
 
-    def _can_use_cached_action(self, instruction: str) -> bool:
+    def _can_use_cached_action(self, instruction: str, image_hash: int) -> bool:
         """Check if we can use a cached action.
 
         Cache is valid if:
@@ -376,8 +455,15 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         2. Instruction matches
         3. Cache index is within usable range
 
+        Note: We intentionally do NOT check image_hash here.
+        Flow matching generates actions from random noise, so re-running
+        inference on every frame causes oscillating behavior.
+        The action chunk should be used for chunk_use_count steps,
+        then a new inference with the current image will be performed.
+
         Args:
             instruction: Current task instruction
+            image_hash: Hash of current image (unused, kept for API compatibility)
 
         Returns:
             True if cached action can be used
@@ -409,6 +495,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         self,
         action_chunk: torch.Tensor,
         instruction: str,
+        image_hash: int,
         log_callback: Optional[LogCallback] = None,
     ) -> None:
         """Cache a predicted action chunk.
@@ -416,6 +503,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         Args:
             action_chunk: Predicted action chunk [1, horizon, action_dim]
             instruction: Instruction used for prediction
+            image_hash: Hash of image used for prediction
             log_callback: Optional callback for logging
         """
         # Extract and denormalize all actions in chunk
@@ -433,6 +521,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         self._action_cache = denorm_chunk
         self._cache_index = 0
         self._cache_instruction = instruction
+        self._cache_image_hash = image_hash
 
         if log_callback:
             log_callback(f'Cached {len(denorm_chunk)} actions, will use {self._chunk_use_count}')
@@ -445,6 +534,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         self._action_cache = None
         self._cache_index = 0
         self._cache_instruction = None
+        self._cache_image_hash = None
         self.logger.debug('Action cache invalidated')
 
     def _prepare_language(self, instruction: str) -> tuple:
@@ -517,19 +607,23 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         return state_tensor
 
     def _normalize_state(self, state: np.ndarray) -> np.ndarray:
-        """Normalize state using the same statistics as actions.
+        """Normalize state using the same statistics and mode as actions.
 
-        Training normalizes state to [-1, 1] using quantile statistics:
-            normalized = 2 * (state - q01) / (q99 - q01) - 1
+        Supports both quantile and zscore normalization modes:
+        - quantile: normalized = 2 * (state - q01) / (q99 - q01) - 1
+        - zscore: normalized = (state - mean) / std
 
         Args:
             state: Raw state array (8-dim)
 
         Returns:
-            Normalized state array in [-1, 1] range
+            Normalized state array
         """
         if not self.norm_stats:
             return state.astype(np.float32)
+
+        # Get normalization mode from config
+        mode = self.config.get('normalization_mode', 'quantile') if self.config else 'quantile'
 
         # Get stats - handle nested structure
         stats = self.norm_stats
@@ -538,23 +632,43 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         if 'action' in stats:
             stats = stats['action']
 
-        q01 = np.array(stats.get('q01', []))
-        q99 = np.array(stats.get('q99', []))
+        if mode == 'zscore':
+            # Z-score normalization: (state - mean) / std
+            mean = np.array(stats.get('mean', []))
+            std = np.array(stats.get('std', []))
 
-        if len(q01) < len(state) or len(q99) < len(state):
-            self.logger.warning('Normalization stats dimension mismatch, using raw state')
-            return state.astype(np.float32)
+            if len(mean) < len(state) or len(std) < len(state):
+                self.logger.warning('Normalization stats dimension mismatch, using raw state')
+                return state.astype(np.float32)
 
-        q01 = q01[:len(state)]
-        q99 = q99[:len(state)]
+            mean = mean[:len(state)]
+            std = std[:len(state)]
 
-        # Normalize to [-1, 1]
-        range_val = q99 - q01
-        range_val = np.where(range_val < 1e-6, 1.0, range_val)
-        normalized = 2 * (state - q01) / range_val - 1
+            # Avoid division by zero
+            std = np.where(std < 1e-6, 1.0, std)
+            normalized = (state - mean) / std
 
-        # Clip to [-1, 1]
-        normalized = np.clip(normalized, -1.0, 1.0)
+            # Clip to reasonable range (same as training)
+            normalized = np.clip(normalized, -10.0, 10.0)
+        else:
+            # Quantile normalization: 2 * (state - q01) / (q99 - q01) - 1
+            q01 = np.array(stats.get('q01', []))
+            q99 = np.array(stats.get('q99', []))
+
+            if len(q01) < len(state) or len(q99) < len(state):
+                self.logger.warning('Normalization stats dimension mismatch, using raw state')
+                return state.astype(np.float32)
+
+            q01 = q01[:len(state)]
+            q99 = q99[:len(state)]
+
+            # Normalize to [-1, 1]
+            range_val = q99 - q01
+            range_val = np.where(range_val < 1e-6, 1.0, range_val)
+            normalized = 2 * (state - q01) / range_val - 1
+
+            # Clip to [-1, 1]
+            normalized = np.clip(normalized, -1.0, 1.0)
 
         return normalized.astype(np.float32)
 
@@ -605,5 +719,6 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             'cache_index': self._cache_index,
             'chunk_use_count': self._chunk_use_count,
             'cache_instruction': self._cache_instruction,
+            'cache_image_hash': self._cache_image_hash,
             'remaining_actions': max(0, self._chunk_use_count - self._cache_index) if self._action_cache is not None else 0,
         }

@@ -46,15 +46,18 @@ def image_to_tensor(
 
     Args:
         image: RGB image as numpy array (H, W, 3), uint8 or float
-        target_size: (width, height) for resizing
+        target_size: (height, width) for resizing (matching training config format)
         normalize_range: (min, max) for normalization
         device: Target device for tensor
 
     Returns:
         Image tensor [1, C, H, W] normalized to specified range
     """
+    # Convert (height, width) to (width, height) for PIL
+    pil_target_size = (target_size[1], target_size[0])
+
     # Prepare PIL image
-    pil_image = prepare_image_for_inference(image, target_size)
+    pil_image = prepare_image_for_inference(image, pil_target_size)
 
     # Convert to float array
     img_array = np.array(pil_image, dtype=np.float32)

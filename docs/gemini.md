@@ -137,7 +137,7 @@ ros2 topic echo /gemini/detections
 
 ## ライセンス
 
-MIT License - Copyright 2025 nop
+- **オリジナルコード**: MIT License（Copyright 2025 nop）
 
 ## 参考資料
 

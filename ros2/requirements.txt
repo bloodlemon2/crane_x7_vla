@@ -36,3 +36,9 @@ gymnasium>=0.26.0
 
 # Genesis simulation
 genesis-world
+
+# OpenPI checkpoint loading (JAX→PyTorch conversion)
+jax[cpu]
+orbax-checkpoint
+safetensors>=0.4.0
+gsutil

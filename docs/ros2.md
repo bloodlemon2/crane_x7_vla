@@ -56,7 +56,7 @@ GEMINI_API_KEY=                     # Google Gemini Robotics-ER APIキー
 # VLA推論
 HF_TOKEN=                           # Hugging Faceトークン
 HF_CACHE_DIR=${HOME}/.cache/huggingface  # モデルキャッシュ
-VLA_MODEL_PATH=                     # ファインチューニング済みモデルパス
+VLA_MODEL_PATH=                     # マージ済みモデルのパス（※LoRAアダプターは不可）
 VLA_TASK_INSTRUCTION=               # タスク指示（自然言語）
 VLA_DEVICE=cuda                     # cuda / cpu
 

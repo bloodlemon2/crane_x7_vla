@@ -631,3 +631,7 @@ python -m crane_x7_vla_rl.training.cli train \
 - [vla-rl.md](vla-rl.md) - VLA-RL詳細（アルゴリズム、設定）
 - [sim.md](sim.md) - Liftシミュレータ
 - [ros2.md](ros2.md) - ROS 2環境詳細
+
+## ライセンス
+
+- **オリジナルコード**: MIT License（Copyright 2025 nop）

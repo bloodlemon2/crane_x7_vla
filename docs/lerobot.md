@@ -164,7 +164,8 @@ v4l2-ctl --list-devices
 
 ## ライセンス
 
-MIT License - Copyright 2025 nop
+- **オリジナルコード（lerobot_robot_crane_x7、lerobot_teleoperator_crane_x7）**: MIT License（Copyright 2025 nop）
+- **LeRobot**: Apache License 2.0（Copyright Hugging Face）
 
 ## 参考資料
 

@@ -522,9 +522,9 @@ class Pi0Model(nn.Module):
     ) -> torch.Tensor:
         """Sample actions using flow matching ODE integration.
 
-        Uses KV caching for efficient inference:
-        - Processes prefix through PaliGemma ONCE, caches KV
-        - Reuses cached KV for each denoising step
+        Processes full prefix+suffix sequence each step for correctness.
+        Both PaliGemma and Expert Gemma process the full sequence together
+        with joint layer-by-layer attention.
 
         Args:
             images: List of image tensors [B, C, H, W]
@@ -547,7 +547,7 @@ class Pi0Model(nn.Module):
             noise = self.sample_noise(actions_shape, device)
         x_t = noise
 
-        # Embed prefix (images + language)
+        # Embed prefix (images + language) - reused for all steps
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
 
         # Convert prefix to model dtype
@@ -555,20 +555,9 @@ class Pi0Model(nn.Module):
         if model_dtype == torch.bfloat16:
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
-        # Create prefix attention mask
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
-        # Process prefix through PaliGemma ONCE and cache KV
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        # Set eager attention for inference
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"
-        _, past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=True,
-        )
+        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"
 
         # Euler integration
         dt = -1.0 / num_steps
@@ -576,15 +565,67 @@ class Pi0Model(nn.Module):
 
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
-            v_t = self._denoise_step(
+            v_t = self._denoise_step_full(
+                prefix_embs,
+                prefix_pad_masks,
+                prefix_att_masks,
                 state,
                 x_t,
                 expanded_time,
-                prefix_pad_masks,
-                past_key_values,
             )
 
             x_t = x_t + dt * v_t
             time = time + dt
 
         return x_t
+
+    def _denoise_step_full(
+        self,
+        prefix_embs: torch.Tensor,
+        prefix_pad_masks: torch.Tensor,
+        prefix_att_masks: torch.Tensor,
+        state: torch.Tensor,
+        x_t: torch.Tensor,
+        timestep: torch.Tensor,
+    ) -> torch.Tensor:
+        """Single denoising step processing full prefix+suffix sequence.
+
+        This processes both prefix and suffix through joint attention,
+        matching the training-time forward pass.
+        """
+        # Embed suffix for current x_t
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, timestep)
+
+        # Match dtype
+        model_dtype = self._get_model_dtype()
+        if model_dtype == torch.bfloat16:
+            suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
+
+        # Build attention masks - MUST match training-time forward() method
+        # Concatenate masks and use make_att_2d_masks for consistency
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+
+        # Position IDs
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+
+        # Prepare 4D attention mask
+        full_att_2d_4d = self._prepare_attention_masks_4d(att_2d_masks)
+
+        # Forward through both models with joint attention
+        (prefix_out, suffix_out), _ = self.paligemma_with_expert.forward(
+            attention_mask=full_att_2d_4d,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, suffix_embs],
+            use_cache=False,
+            adarms_cond=[None, adarms_cond],
+        )
+
+        # Extract velocity prediction from suffix output
+        suffix_out = suffix_out[:, -self.action_horizon :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        v_t = self.action_out_proj(suffix_out)
+
+        return v_t
