@@ -94,6 +94,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         self._action_cache: Optional[np.ndarray] = None  # [horizon, action_dim]
         self._cache_index: int = 0  # Current index in cached chunk
         self._cache_instruction: Optional[str] = None  # Instruction for cached chunk
+        self._cache_image_hash: Optional[int] = None  # Image hash for cached chunk
         self._chunk_use_count: int = chunk_use_count  # Actions to use per chunk
 
     def load_model(self) -> bool:
@@ -378,8 +379,11 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             self.logger.error('Tokenizer not loaded')
             return None
 
+        # Compute image hash for cache validation
+        image_hash = compute_image_hash(image)
+
         # Check if we can use cached action (fast path)
-        if self._can_use_cached_action(instruction):
+        if self._can_use_cached_action(instruction, image_hash):
             action = self._get_cached_action(log_callback)
             if log_callback:
                 log_callback(f'Final predicted action (cached): {action}')
@@ -389,7 +393,6 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         try:
             # Debug logging
             if log_callback:
-                image_hash = compute_image_hash(image)
                 log_callback(
                     f'Pi0 inference (new prediction): image_shape={image.shape}, '
                     f'image_hash={image_hash:04d}, '
@@ -428,7 +431,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             )
 
             # Cache the action chunk for future use
-            self._cache_action_chunk(action_chunk, instruction, log_callback)
+            self._cache_action_chunk(action_chunk, instruction, image_hash, log_callback)
 
             # Return the first action from cache
             action = self._get_cached_action(log_callback)
@@ -444,16 +447,18 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             self.logger.error(traceback.format_exc())
             return None
 
-    def _can_use_cached_action(self, instruction: str) -> bool:
+    def _can_use_cached_action(self, instruction: str, image_hash: int) -> bool:
         """Check if we can use a cached action.
 
         Cache is valid if:
         1. Cache exists
         2. Instruction matches
-        3. Cache index is within usable range
+        3. Image hash matches (same image)
+        4. Cache index is within usable range
 
         Args:
             instruction: Current task instruction
+            image_hash: Hash of current image
 
         Returns:
             True if cached action can be used
@@ -461,6 +466,8 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         if self._action_cache is None:
             return False
         if self._cache_instruction != instruction:
+            return False
+        if self._cache_image_hash != image_hash:
             return False
         if self._cache_index >= self._chunk_use_count:
             return False
@@ -485,6 +492,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         self,
         action_chunk: torch.Tensor,
         instruction: str,
+        image_hash: int,
         log_callback: Optional[LogCallback] = None,
     ) -> None:
         """Cache a predicted action chunk.
@@ -492,6 +500,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         Args:
             action_chunk: Predicted action chunk [1, horizon, action_dim]
             instruction: Instruction used for prediction
+            image_hash: Hash of image used for prediction
             log_callback: Optional callback for logging
         """
         # Extract and denormalize all actions in chunk
@@ -509,6 +518,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         self._action_cache = denorm_chunk
         self._cache_index = 0
         self._cache_instruction = instruction
+        self._cache_image_hash = image_hash
 
         if log_callback:
             log_callback(f'Cached {len(denorm_chunk)} actions, will use {self._chunk_use_count}')
@@ -521,6 +531,7 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
         self._action_cache = None
         self._cache_index = 0
         self._cache_instruction = None
+        self._cache_image_hash = None
         self.logger.debug('Action cache invalidated')
 
     def _prepare_language(self, instruction: str) -> tuple:
@@ -681,5 +692,6 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
             'cache_index': self._cache_index,
             'chunk_use_count': self._chunk_use_count,
             'cache_instruction': self._cache_instruction,
+            'cache_image_hash': self._cache_image_hash,
             'remaining_actions': max(0, self._chunk_use_count - self._cache_index) if self._action_cache is not None else 0,
         }
