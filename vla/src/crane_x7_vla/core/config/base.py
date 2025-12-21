@@ -75,6 +75,44 @@ class DataConfig:
 
 
 @dataclass
+class LoRAConfig:
+    """Configuration for LoRA (Low-Rank Adaptation) fine-tuning.
+
+    LoRA enables parameter-efficient fine-tuning by adding low-rank
+    decomposition matrices to transformer layers.
+    """
+
+    enabled: bool = True
+    """Whether to use LoRA for parameter-efficient fine-tuning"""
+
+    rank: int = 32
+    """LoRA rank (higher = more parameters, better capacity)"""
+
+    alpha: int = 16
+    """LoRA alpha scaling factor (effective scaling = alpha/rank)"""
+
+    dropout: float = 0.05
+    """Dropout applied to LoRA weights"""
+
+    target_modules: list[str] | None = None
+    """Target modules for LoRA. None = use backend defaults.
+    Common: ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']"""
+
+    use_rslora: bool = False
+    """Use Rank-Stabilized LoRA (rsLoRA) for better training stability"""
+
+    use_dora: bool = False
+    """Use Weight-Decomposed LoRA (DoRA) for improved fine-tuning"""
+
+    bias: Literal["none", "all", "lora_only"] = "none"
+    """Which bias to train: 'none', 'all', or 'lora_only'"""
+
+    skip_merge_on_save: bool = True
+    """Skip LoRA merge during checkpoint saving to avoid timeout.
+    Set to True for multi-GPU training; merge post-training with merge_lora script."""
+
+
+@dataclass
 class OverfittingConfig:
     """Configuration for overfitting detection during training.
 
@@ -157,6 +195,9 @@ class UnifiedVLAConfig:
     overfitting: OverfittingConfig = field(default_factory=OverfittingConfig)
     """Overfitting detection configuration"""
 
+    lora: LoRAConfig = field(default_factory=LoRAConfig)
+    """LoRA configuration for parameter-efficient fine-tuning"""
+
     output_dir: str | Path = "./outputs"
     """Output directory for checkpoints and logs"""
 
@@ -216,8 +257,18 @@ class UnifiedVLAConfig:
             OverfittingConfig(**overfitting_config_dict) if overfitting_config_dict else OverfittingConfig()
         )
 
+        # Parse LoRA config
+        lora_config_dict = config_dict.pop("lora", {})
+        lora_config = LoRAConfig(**lora_config_dict) if lora_config_dict else LoRAConfig()
+
         # Create main config
-        return cls(data=data_config, training=training_config, overfitting=overfitting_config, **config_dict)
+        return cls(
+            data=data_config,
+            training=training_config,
+            overfitting=overfitting_config,
+            lora=lora_config,
+            **config_dict,
+        )
 
     def to_yaml(self, yaml_path: str | Path) -> None:
         """
@@ -274,6 +325,17 @@ class UnifiedVLAConfig:
                 "overfit_split_ratio": self.overfitting.overfit_split_ratio,
                 "overfit_check_interval": self.overfitting.overfit_check_interval,
                 "overfit_check_steps": self.overfitting.overfit_check_steps,
+            },
+            "lora": {
+                "enabled": self.lora.enabled,
+                "rank": self.lora.rank,
+                "alpha": self.lora.alpha,
+                "dropout": self.lora.dropout,
+                "target_modules": self.lora.target_modules,
+                "use_rslora": self.lora.use_rslora,
+                "use_dora": self.lora.use_dora,
+                "bias": self.lora.bias,
+                "skip_merge_on_save": self.lora.skip_merge_on_save,
             },
             "backend_config": self.backend_config,
         }
