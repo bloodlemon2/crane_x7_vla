@@ -298,14 +298,21 @@ class Pi0InferenceCore(BaseVLAInferenceCore):
 
         # Add data_root_dir from checkpoint config if available
         # Pi0TrainerConfig stores 'data_root_dir' (aligned with backend.py)
+        # Translate training paths (/root/vla/) to inference paths (/workspace/)
         if self.config:
             data_root = self.config.get('data_root_dir')
             if data_root:
+                # Translate /root/vla/ -> /workspace/ for inference environment
+                if data_root.startswith('/root/vla/'):
+                    data_root = data_root.replace('/root/vla/', '/workspace/')
                 data_root_path = Path(data_root)
                 stats_paths.append(data_root_path / "dataset_statistics.json")
-                # Also check parent directory
-                if data_root_path.parent.exists():
-                    stats_paths.append(data_root_path.parent / "dataset_statistics.json")
+                # Also check parent directory (with permission error handling)
+                try:
+                    if data_root_path.parent.exists():
+                        stats_paths.append(data_root_path.parent / "dataset_statistics.json")
+                except PermissionError:
+                    pass  # Skip inaccessible paths
 
         # Add Docker workspace paths as fallback
         workspace_data_dirs = [
