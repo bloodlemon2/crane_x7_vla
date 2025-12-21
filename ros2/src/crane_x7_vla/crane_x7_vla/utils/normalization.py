@@ -110,7 +110,7 @@ def load_norm_stats_from_config(
 def denormalize_action(
     action: np.ndarray,
     stats: Dict[str, Any],
-    mode: Literal['quantile', 'normal'] = 'quantile',
+    mode: Literal['quantile', 'normal', 'zscore'] = 'quantile',
     stats_key: str = 'crane_x7',
     logger: Optional[logging.Logger] = None,
 ) -> np.ndarray:
@@ -119,7 +119,7 @@ def denormalize_action(
     Args:
         action: Normalized action array
         stats: Statistics dictionary with nested structure
-        mode: Normalization mode ('quantile' or 'normal')
+        mode: Normalization mode ('quantile', 'normal', or 'zscore')
         stats_key: Key for robot-specific stats (e.g., 'crane_x7')
         logger: Optional logger instance
 
@@ -145,7 +145,8 @@ def denormalize_action(
     try:
         if mode == 'quantile':
             return _denormalize_quantile(action, key_stats)
-        elif mode == 'normal':
+        elif mode in ('normal', 'zscore'):
+            # 'zscore' is an alias for 'normal' (same denormalization: action * std + mean)
             return _denormalize_normal(action, key_stats)
         else:
             log.warning(f'Unknown normalization mode: {mode}')
