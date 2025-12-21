@@ -31,7 +31,7 @@ from ...modeling_attn_mask_utils import _prepare_4d_attention_mask
 from ...modeling_layers import GradientCheckpointingLayer
 from ...modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, ImageClassifierOutput
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
-from ...utils import ModelOutput, auto_docstring, can_return_tuple, logging, torch_int
+from ...utils import ModelOutput, can_return_tuple, logging, torch_int
 from .configuration_siglip import SiglipConfig, SiglipTextConfig, SiglipVisionConfig
 
 
@@ -134,13 +134,10 @@ def default_flax_embed_init(tensor):
 
 
 @dataclass
-@auto_docstring(
-    custom_intro="""
-    Base class for vision model's outputs that also contains image embeddings of the pooling of the last hidden states.
-    """
-)
 # Copied from transformers.models.clip.modeling_clip.CLIPVisionModelOutput with CLIP->Siglip
 class SiglipVisionModelOutput(ModelOutput):
+    """Base class for vision model's outputs that also contains image embeddings of the pooling of the last hidden states."""
+
     r"""
     image_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim)` *optional* returned when model is initialized with `with_projection=True`):
         The image embeddings obtained by applying the projection layer to the pooler_output.
@@ -153,13 +150,10 @@ class SiglipVisionModelOutput(ModelOutput):
 
 
 @dataclass
-@auto_docstring(
-    custom_intro="""
-    Base class for text model's outputs that also contains a pooling of the last hidden states.
-    """
-)
 # Copied from transformers.models.clip.modeling_clip.CLIPTextModelOutput with CLIP->Siglip
 class SiglipTextModelOutput(ModelOutput):
+    """Base class for text model's outputs that also contains a pooling of the last hidden states."""
+
     r"""
     text_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim)` *optional* returned when model is initialized with `with_projection=True`):
         The text embeddings obtained by applying the projection layer to the pooler_output.
@@ -172,7 +166,6 @@ class SiglipTextModelOutput(ModelOutput):
 
 
 @dataclass
-@auto_docstring
 # Copied from transformers.models.clip.modeling_clip.CLIPOutput with CLIP->Siglip
 class SiglipOutput(ModelOutput):
     r"""
@@ -480,7 +473,6 @@ class SiglipEncoderLayer(GradientCheckpointingLayer):
         return outputs
 
 
-@auto_docstring
 class SiglipPreTrainedModel(PreTrainedModel):
     config_class = SiglipConfig
     base_model_prefix = "siglip"
@@ -639,7 +631,6 @@ class SiglipTextTransformer(nn.Module):
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
         input_ids: torch.Tensor | None = None,
@@ -689,12 +680,9 @@ class SiglipTextTransformer(nn.Module):
         )
 
 
-@auto_docstring(
-    custom_intro="""
-    The text model from SigLIP without any head or projection on top.
-    """
-)
 class SiglipTextModel(SiglipPreTrainedModel):
+    """The text model from SigLIP without any head or projection on top."""
+
     config_class = SiglipTextConfig
 
     def __init__(self, config: SiglipTextConfig):
@@ -710,7 +698,6 @@ class SiglipTextModel(SiglipPreTrainedModel):
         self.text_model.embeddings.token_embedding = value
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
         input_ids: torch.Tensor | None = None,
@@ -759,7 +746,6 @@ class SiglipVisionTransformer(nn.Module):
             self.head = SiglipMultiheadAttentionPoolingHead(config)
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
         pixel_values,
@@ -820,12 +806,9 @@ class SiglipMultiheadAttentionPoolingHead(nn.Module):
         return hidden_state[:, 0]
 
 
-@auto_docstring(
-    custom_intro="""
-    The vision model from SigLIP without any head or projection on top.
-    """
-)
 class SiglipVisionModel(SiglipPreTrainedModel):
+    """The vision model from SigLIP without any head or projection on top."""
+
     config_class = SiglipVisionConfig
     main_input_name = "pixel_values"
 
@@ -841,7 +824,6 @@ class SiglipVisionModel(SiglipPreTrainedModel):
         return self.vision_model.embeddings.patch_embedding
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
         pixel_values,
@@ -878,7 +860,6 @@ class SiglipVisionModel(SiglipPreTrainedModel):
         )
 
 
-@auto_docstring
 class SiglipModel(SiglipPreTrainedModel):
     config_class = SiglipConfig
 
@@ -914,7 +895,6 @@ class SiglipModel(SiglipPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @auto_docstring
     def get_text_features(
         self,
         input_ids: torch.Tensor | None = None,
@@ -960,7 +940,6 @@ class SiglipModel(SiglipPreTrainedModel):
 
         return pooled_output
 
-    @auto_docstring
     def get_image_features(
         self,
         pixel_values: torch.FloatTensor | None = None,
@@ -1010,7 +989,6 @@ class SiglipModel(SiglipPreTrainedModel):
         return pooled_output
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
@@ -1108,13 +1086,9 @@ class SiglipModel(SiglipPreTrainedModel):
         )
 
 
-@auto_docstring(
-    custom_intro="""
-    SigLIP vision encoder with an image classification head on top (a linear layer on top of the pooled final hidden states of
-    the patch tokens) e.g. for ImageNet.
-    """
-)
 class SiglipForImageClassification(SiglipPreTrainedModel):
+    """SigLIP vision encoder with an image classification head on top (a linear layer on top of the pooled final hidden states of the patch tokens) e.g. for ImageNet."""
+
     main_input_name = "pixel_values"
 
     def __init__(self, config: SiglipConfig) -> None:
@@ -1136,7 +1110,6 @@ class SiglipForImageClassification(SiglipPreTrainedModel):
         self.post_init()
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
         pixel_values: torch.Tensor | None = None,
