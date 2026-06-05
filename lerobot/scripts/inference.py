@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025 nop
+# SPDX-FileCopyrightText: 2026 bloodlemon
 # SPDX-License-Identifier: MIT
 
 """Inference script for running trained policies on CRANE-X7."""

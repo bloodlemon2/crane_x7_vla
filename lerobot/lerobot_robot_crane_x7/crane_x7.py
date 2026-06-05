@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: 2025 nop
+# SPDX-FileCopyrightText: 2026 bloodlemon
 # SPDX-License-Identifier: MIT
 
 """CRANE-X7 Robot implementation for LeRobot."""
@@ -231,8 +232,14 @@ class CraneX7Robot(Robot):
             Dictionary containing motor positions and camera images
         """
         start = time.perf_counter()
-        obs_dict = self.bus.sync_read("Present_Position")
-        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        pos_dict = self.bus.sync_read("Present_Position")
+        current_dict = self.bus.sync_read("Present_Current")
+        # Merge positions and currents into the observation dict
+        obs_dict = {}
+        for motor, val in pos_dict.items():
+            obs_dict[f"{motor}.pos"] = val
+            # add current if available, otherwise default to 0.0
+            obs_dict[f"{motor}.current"] = current_dict.get(motor, 0.0)
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
