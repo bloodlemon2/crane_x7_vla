@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: 2025 nop
 # SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Tomoya Tsuji
 
 [build-system]
 requires = ["hatchling"]
@@ -26,7 +27,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "lerobot[dynamixel]==0.4.3",
+    "lerobot[dynamixel, smolvla]==0.4.3",
     "numpy>=1.24.0",
     "opencv-python>=4.8.0",
     "pyrealsense2>=2.54.0",
