@@ -71,8 +71,12 @@ class CraneX7Robot(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        """Motor position feature definitions."""
-        return {f"{motor}.pos": float for motor in self.bus.motors}
+        """Motor position and current feature definitions."""
+        features: dict[str, type] = {}
+        for motor in self.bus.motors:
+            features[f"{motor}.pos"] = float
+            features[f"{motor}.current"] = float
+        return features
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:

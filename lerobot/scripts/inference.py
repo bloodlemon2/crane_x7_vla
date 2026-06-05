@@ -152,8 +152,8 @@ def main():
             # Prepare observation for policy
             obs_dict = {}
 
-            # Motor positions
-            state = np.array([
+            # Motor positions and currents
+            positions = [
                 obs["joint1.pos"],
                 obs["joint2.pos"],
                 obs["joint3.pos"],
@@ -162,7 +162,18 @@ def main():
                 obs["joint6.pos"],
                 obs["joint7.pos"],
                 obs["gripper.pos"],
-            ], dtype=np.float32)
+            ]
+            currents = [
+                obs.get("joint1.current", 0.0),
+                obs.get("joint2.current", 0.0),
+                obs.get("joint3.current", 0.0),
+                obs.get("joint4.current", 0.0),
+                obs.get("joint5.current", 0.0),
+                obs.get("joint6.current", 0.0),
+                obs.get("joint7.current", 0.0),
+                obs.get("gripper.current", 0.0),
+            ]
+            state = np.array(positions + currents, dtype=np.float32)
             obs_dict["observation.state"] = torch.from_numpy(state).unsqueeze(0).to(device)
 
             # Camera image (if available)
