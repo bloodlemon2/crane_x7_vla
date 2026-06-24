@@ -98,8 +98,8 @@ class CraneX7Robot(Robot):
 
     @property
     def action_features(self) -> dict:
-        """Define action space (motor position commands)."""
-        return self._motors_ft
+        """Define action space (motor position commands). Only positions are actions; currents are observations."""
+        return {f"{motor}.pos": float for motor in self.bus.motors}
 
     # -------------------------------------------------------------------------
     # Connection management
